@@ -1,0 +1,140 @@
+# Production stack. Copy .env.prod.example to .env.prod, set unique secrets, then:
+# docker compose -f docker-compose.prod.yaml --env-file .env.prod up -d --build
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${ATS_DB_FORWARD_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: ats
+      POSTGRES_USER: ats_owner
+      POSTGRES_PASSWORD: ${ATS_OWNER_DB_PASSWORD:?set ATS_OWNER_DB_PASSWORD}
+      ATS_APP_DB_PASSWORD: ${ATS_APP_DB_PASSWORD:?set ATS_APP_DB_PASSWORD}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./deploy/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ats_owner -d ats"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${ATS_REDIS_PASSWORD:?set ATS_REDIS_PASSWORD}"]
+    environment:
+      REDISCLI_AUTH: ${ATS_REDIS_PASSWORD}
+    volumes: ["redis_data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+    volumes: ["minio_data:/data"]
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio: {condition: service_started}
+    entrypoint: ["/bin/sh", "-c"]
+    command: >-
+      until mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"; do sleep 2; done &&
+      mc mb --ignore-existing local/ats-cv &&
+      (mc admin policy info local ats-cv-access >/dev/null 2>&1 || mc admin policy create local ats-cv-access /policy/minio-cv-policy.json) &&
+      (mc admin user info local ats-app >/dev/null 2>&1 || mc admin user add local ats-app "$${ATS_S3_APP_PASSWORD}") &&
+      mc admin policy attach local ats-cv-access --user ats-app
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      ATS_S3_APP_PASSWORD: ${ATS_S3_APP_PASSWORD:?set ATS_S3_APP_PASSWORD}
+    volumes:
+      - ./deploy/minio-cv-policy.json:/policy/minio-cv-policy.json:ro
+    restart: "no"
+
+  migrate:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    environment:
+      ATS_MIGRATION_DATABASE_URL: postgresql+psycopg://ats_owner:${ATS_OWNER_DB_PASSWORD:?set ATS_OWNER_DB_PASSWORD}@postgres:5432/ats
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  app:
+    build: .
+    restart: unless-stopped
+    environment: &app_environment
+      ATS_ENVIRONMENT: production
+      ATS_DATABASE_URL: postgresql+psycopg://ats_app:${ATS_APP_DB_PASSWORD:?set ATS_APP_DB_PASSWORD}@postgres:5432/ats
+      ATS_RLS_ENABLED: "true"
+      ATS_SECRET_KEY: ${ATS_SECRET_KEY:?set ATS_SECRET_KEY}
+      ATS_ALLOWED_HOSTS: '["${ATS_DOMAIN:?set ATS_DOMAIN}", "localhost", "127.0.0.1"]'
+      ATS_SIGNUP_MODE: platform
+      ATS_COOKIE_SECURE: "true"
+      ATS_TRUST_PROXY: "true"
+      ATS_AUTO_CREATE_TABLES: "false"
+      ATS_WORKERS: ${ATS_WORKERS:-4}
+      ATS_REDIS_URL: redis://:${ATS_REDIS_PASSWORD}@redis:6379/0
+      ATS_STORAGE_BACKEND: s3
+      ATS_S3_ENDPOINT_URL: http://minio:9000
+      ATS_S3_BUCKET: ats-cv
+      ATS_S3_REGION: us-east-1
+      ATS_S3_ACCESS_KEY: ats-app
+      ATS_S3_SECRET_KEY: ${ATS_S3_APP_PASSWORD:?set ATS_S3_APP_PASSWORD}
+      ATS_OPENAI_API_KEY: ${ATS_OPENAI_API_KEY:-}
+      ATS_LLM_MODEL: ${ATS_LLM_MODEL:-gpt-4o-mini}
+      ATS_LLM_BASE_URL: ${ATS_LLM_BASE_URL:-}
+      ATS_LLM_API_KEY: ${ATS_LLM_API_KEY:-}
+      ATS_LLM_JSON_MODE: ${ATS_LLM_JSON_MODE:-auto}
+      ATS_LLM_LABEL: ${ATS_LLM_LABEL:-}
+      ATS_AI_MONTHLY_CAP: ${ATS_AI_MONTHLY_CAP:-5000}
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+      minio-init: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  worker:
+    build: .
+    command: ["python", "-m", "app.worker"]
+    restart: unless-stopped
+    environment: *app_environment
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+      minio-init: {condition: service_completed_successfully}
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      ATS_DOMAIN: ${ATS_DOMAIN:?set ATS_DOMAIN}
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app: {condition: service_healthy}
+
+volumes:
+  pg_data:
+  redis_data:
+  minio_data:
+  caddy_data:
+  caddy_config:

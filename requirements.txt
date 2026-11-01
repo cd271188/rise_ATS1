@@ -1,0 +1,20 @@
+fastapi>=0.115
+uvicorn>=0.30
+sqlalchemy>=2.0
+alembic>=1.13
+argon2-cffi>=23.1
+pyjwt>=2.8
+pydantic-settings>=2.2
+openpyxl>=3.1
+python-docx>=1.1
+reportlab>=4.0
+pdfminer.six>=20231228
+pypdf>=4.0
+openai>=1.40
+redis>=5.0
+boto3>=1.34
+fastembed>0.3
+numpy>=1.26
+# Postgres (optional): pip install "psycopg[binary]"
+pgvector>=0.3.6
+# Tests: pip install pytest httpx

@@ -1,0 +1,35 @@
+# Default: one container, SQLite file on a volume (self-hosted, single company).[cite: 58]
+# cp .env.example .env (set ATS_SECRET_KEY, ATS_ALLOWED_HOSTS) then docker compose up -d --build[cite: 58]
+# PostgreSQL: docker compose --profile postgres up -d --build (and set ATS_DATABASE_URL in .env, see .env.example)[cite: 58]
+# NOTE: this file has not been executed in the environment it was written in (no Docker available there).[cite: 58]
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      ATS_DATABASE_URL: ${ATS_DATABASE_URL:-sqlite:////data/ats.db}
+    ports:
+      - "${ATS_PUBLISH_PORT:-8000}:8000"
+    volumes:
+      - ats_data:/data
+
+  postgres:
+    profiles: ["postgres"]
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ats
+      POSTGRES_USER: ats
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ats -d ats"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  ats_data:
+  pg_data:
