@@ -1,0 +1,15 @@
+.git
+.venv
+.cache
+.service-agent
+.env
+.env.*
+**/__pycache__
+**/*.pyc
+*.db
+*.db-*
+*.key
+models_cache
+output
+cv_files
+.DS_Store

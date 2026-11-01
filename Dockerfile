@@ -13,7 +13,8 @@ COPY scripts ./scripts
 COPY alembic.ini .
 
 RUN useradd --system --create-home ats && mkdir /data && chown ats /data
-USER ats
+COPY deploy/entrypoint.py /usr/local/bin/ats-entrypoint.py
+ENTRYPOINT ["python", "/usr/local/bin/ats-entrypoint.py"]
 
 ENV ATS_HOST=0.0.0.0 ATS_PORT=8000 ATS_AUTO_CREATE_TABLES=false
 EXPOSE 8000
