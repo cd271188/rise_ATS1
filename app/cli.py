@@ -103,7 +103,9 @@ def main(argv=None) -> int:
     if args.cmd == "test-llm":
         return test_llm(settings)
     owner_commands = {"grant-staff-access", "revoke-staff-access", "list-staff-access", "reap-staff-access"}
-    engine = make_engine(settings.migration_database_url or settings.database_url) if args.cmd in owner_commands else settings.database_url
+    database_url = ((settings.migration_database_url or settings.database_url)
+                    if args.cmd in owner_commands else settings.database_url)
+    engine = make_engine(database_url)
     if args.cmd in owner_commands:
         return staff_access(args, engine)
     if settings.auto_create_tables:
