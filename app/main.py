@@ -24,6 +24,16 @@ CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' 
        "object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 
 
+class ProbeTrustedHostMiddleware(TrustedHostMiddleware):
+    async def __call__(self, scope, receive, send):
+        # Platform health probes address the pod IP rather than its public host.
+        if (scope["type"] == "http" and scope.get("method") == "GET"
+                and scope.get("path") in {"/healthz", "/readyz"}):
+            await self.app(scope, receive, send)
+            return
+        await super().__call__(scope, receive, send)
+
+
 def _secret(settings: Settings) -> str:
     if settings.secret_key:
         return settings.secret_key
@@ -98,7 +108,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             h["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response
 
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
+    app.add_middleware(ProbeTrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
 
     @app.exception_handler(ValidationError)
     async def _validation(_, e: ValidationError):
