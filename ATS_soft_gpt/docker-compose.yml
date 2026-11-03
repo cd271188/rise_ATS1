@@ -1,0 +1,38 @@
+# Local PostgreSQL: copy .env.example to .env, set POSTGRES_PASSWORD, then run
+# docker compose --profile postgres up -d --build
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      ATS_DATABASE_URL: ${ATS_DATABASE_URL:-postgresql+psycopg://ats@postgres:5432/ats}
+      ATS_AUTO_CREATE_TABLES: ${ATS_AUTO_CREATE_TABLES:-true}
+      ATS_SECRET_FILE: /data/ats_secret.key
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    ports:
+      - "${ATS_PUBLISH_PORT:-8000}:8000"
+    volumes:
+      - ats_data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ats
+      POSTGRES_USER: ats
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ats -d ats"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  ats_data:
+  pg_data:

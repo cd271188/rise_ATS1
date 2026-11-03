@@ -1,0 +1,8 @@
+# Automatic HTTPS for {$ATS_DOMAIN}. The domain must point at this machine and ports 80/443 must be open.
+{$ATS_DOMAIN} {
+    encode zstd gzip
+    request body {
+        max_size 16MB
+    }
+    reverse_proxy app:8000
+}

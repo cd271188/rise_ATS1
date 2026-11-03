@@ -1,0 +1,24 @@
+ - from starting / scratch
+
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+ - for creator cred
+ python -m app.cli create-creator --email chandrahas.dhiraj@gmail.com --name "Chandrahas"
+ - ask for password
+ 
+
+
+ For friend:-
+ One time install on my system
+ brew install cloudflared
+
+ terminal 1: start the app:
+ source .venv/bin/activate
+ ATS_ALLOWED_HOSTS='["localhost", "127.0.0.1","*.trycloudflare.com"]' ATS_COOKIE_SECURE=true ATS_TRUST_PROXY=true python -m app
+
+ terminal 2: start the tunnel:
+ cloudflare tunnel --url http://localhost:8000
+
+ 
