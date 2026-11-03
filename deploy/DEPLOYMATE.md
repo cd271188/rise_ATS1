@@ -6,7 +6,12 @@ as the readiness endpoint. Start with 256m CPU / 512Mi requested and
 512m CPU / 1Gi limited, then size from runtime measurements.
 
 Attach a regular 10 GiB volume at `/data` before the first deployment.
-The entrypoint prepares directories and drops privileges to the `ats` user.
+Set the service's `fsGroup` to `10001` and redeploy to apply it to the pod.
+The image runs as `ats` (UID/GID `10001:10001`); the entrypoint checks that
+the mounted directories support file creation, reading, and removal.
+Volume ownership is managed by the storage driver, never by startup `chown`.
+The driver must support filesystem groups; otherwise configure its access-point
+identity and directory permissions for this UID/GID on the storage side.
 Keep the database, CV files, and embedding cache on that volume:
 
 | Environment variable | Value |

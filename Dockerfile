@@ -12,8 +12,11 @@ COPY migrations ./migrations
 COPY scripts ./scripts
 COPY alembic.ini .
 
-RUN useradd --system --create-home ats && mkdir /data && chown ats /data
+RUN groupadd --system --gid 10001 ats \
+ && useradd --system --uid 10001 --gid ats --create-home ats \
+ && install -d -o ats -g ats -m 2770 /data
 COPY deploy/entrypoint.py /usr/local/bin/ats-entrypoint.py
+USER 10001:10001
 ENTRYPOINT ["python", "/usr/local/bin/ats-entrypoint.py"]
 
 ENV ATS_HOST=0.0.0.0 ATS_PORT=8000 ATS_AUTO_CREATE_TABLES=false
