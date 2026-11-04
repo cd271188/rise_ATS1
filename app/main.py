@@ -142,7 +142,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.exception_handler(StarletteHTTPException)
     async def _http(_, e: StarletteHTTPException):
-        return _error(e.status_code, str(e.detail)) if e.status_code != 404 else "not found"
+        # Exception handlers must return a Response. Returning a bare string for
+        # 404s makes Starlette try to call that string as ASGI middleware and
+        # turns the original not-found response into a confusing TypeError/500.
+        message = "not found" if e.status_code == 404 else str(e.detail)
+        return _error(e.status_code, message)
 
     @app.exception_handler(RequestValidationError)
     async def _request(_, e: RequestValidationError):
