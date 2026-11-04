@@ -64,8 +64,10 @@ export async function settingsPage(root, params) {
     pageHeader("Settings", "Dropdown lists and company preferences. Administrators only."),
     card("Company", orgForm),
     card("Dropdown lists", listForm),
-    card("Statuses", h("p", { class: "muted" }, "The nine statuses are fixed because reports depend on them. The latest interview entry sets a candidate's status."),
-      h("div", { class: "badge-row" }, (lists.status || []).map((s) => statusBadge(s)))));
+    card("Interview statuses", h("p", { class: "muted" }, "These interview outcomes are fixed. The latest interview entry sets a candidate's interview status."),
+      h("div", { class: "badge-row" }, (lists.status || []).map((s) => statusBadge(s)))),
+    card("Process stages", h("p", { class: "muted" }, "The candidate's current process stage is tracked separately from interview outcomes."),
+      h("div", { class: "badge-row" }, (lists.process || []).map((s) => statusBadge(s))));
 }
 
 export async function accountPage(root) {
