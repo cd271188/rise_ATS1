@@ -1,11 +1,14 @@
 """Shared constants: field catalogue, statuses, seed lists, roles. Carried over from the v1 app."""
 
-STATUSES = ["L1 Interview", "L2 Interview", "L3 Interview", "Offer", "Drop",
-            "Feedback Pending", "To Be Scheduled", "Scheduled", "Yet to Join"]
-DEFAULT_STATUS = "To Be Scheduled"
+INTERVIEW_STATUSES = ["Selected", "Rejected", "Scheduled", "Re-Scheduled", "To be scheduled",
+                      "Feedback Pending", "Yet to Offer", "Yet to join", "Joined", "Drop"]
+STATUSES = INTERVIEW_STATUSES  # compatibility alias for imports and reports
+PROCESSES = ["Screening", "L1 Interview", "L2 Interview", "L3 Interview", "HR Discussion"]
+DEFAULT_STATUS = "To be scheduled"
 
 SEED_LISTS = {
-    "status": STATUSES,
+    "status": INTERVIEW_STATUSES,
+    "process": PROCESSES,
     "yes_no": ["Yes", "No"],
     "notice_period": ["Immediate", "15 Days", "30 Days", "45 Days", "60 Days", "90 Days", "Serving Notice", "Other"],
     "recruiters": [],
@@ -16,6 +19,7 @@ SEED_LISTS = {
 CANDIDATE_FIELDS = [
     ("date_added", "Date Added", "date", "Required", None, "Defaults to today."),
     ("recruiter", "Recruiter", "select", "Required", "recruiters", "Pick from the Settings page."),
+    ("process", "Process", "select", "Required", "process", "Candidate's current pipeline stage."),
     ("full_name", "Candidate Name", "text", "Required", None, "Full name as on the CV. Used for duplicate checking."),
     ("current_company", "Current Company", "text", "Recommended", None, "Present employer."),
     ("current_location", "Location", "text", "Required", None, "Current city."),
@@ -28,11 +32,11 @@ CANDIDATE_FIELDS = [
     ("existing_offer", "Existing Offer?", "select", "Recommended", "yes_no", "Does the candidate hold another offer?"),
     ("offer_details", "Offer Details", "text", "Optional", None, "Company, CTC and joining date of the other offer."),
     ("date_of_birth", "Date of Birth", "date", "Optional", None, "Collect only if genuinely needed. Visible to admins only."),
-    ("email", "Email", "email", "Recommended", None, "Used for duplicate checking."),
+    ("email", "Email", "email", "Required", None, "Used for duplicate checking."),
     ("phone", "Phone", "text", "Required", None, "Used for duplicate checking."),
     ("primary_skill_role", "Role / Primary Skill", "text", "Recommended", None, "Role being considered for."),
     ("client", "Client", "select", "Required", "clients", "Pick from the Settings page."),
-    ("job_req_id", "Job Req ID", "text", "Optional", None, "Client requisition reference."),
+    ("job_req_id", "Client Job ID", "text", "Optional", None, "Choose an existing client requirement after selecting the client."),
     ("profile_submitted_to_client", "Submitted to Client?", "select", "Recommended", "yes_no", "Yes once the profile has gone to the client."),
     ("client_submission_date", "Client Submission Date", "date", "Optional", None, "Date the profile was sent to the client."),
     ("recruiter_notes", "Recruiter Notes", "textarea", "Optional", None, "Anything else worth remembering."),
