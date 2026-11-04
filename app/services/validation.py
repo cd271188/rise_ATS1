@@ -2,7 +2,7 @@
 import re
 from datetime import datetime
 
-from ..fields import DATES, FIELD_KEYS, INTERVIEW_DATES, INTERVIEW_FIELDS, NUMERIC, REQUIRED, STATUSES
+from ..fields import DATES, FIELD_KEYS, INTERVIEW_DATES, INTERVIEW_FIELDS, INTERVIEW_STATUSES, NUMERIC, PROCESSES, REQUIRED
 from .common import ValidationError
 
 
@@ -45,8 +45,10 @@ def clean_candidate(data: dict, partial: bool = False) -> dict:
                 raise ValueError("not a valid email address")
             elif key == "phone" and v and len(re.sub(r"\D", "", v)) < 7:
                 raise ValueError("not a valid phone number")
-            elif key == "current_status" and v and v not in STATUSES:
-                raise ValueError("not a valid status")
+            elif key == "current_status" and v and v not in INTERVIEW_STATUSES:
+                raise ValueError("not a valid interview status")
+            elif key == "process" and v and v not in PROCESSES:
+                raise ValueError("not a valid process")
             else:
                 v = v or None
         except ValueError as e:
@@ -82,8 +84,8 @@ def clean_interview(data: dict):
         out[key] = v or None
     if not out.get("status"):
         errors["status"] = "required"
-    elif out["status"] not in STATUSES:
-        errors["status"] = "not a valid status"
+    elif out["status"] not in INTERVIEW_STATUSES:
+        errors["status"] = "not a valid interview status"
     if errors:
         raise ValidationError(errors)
     return ref, out
