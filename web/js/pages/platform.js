@@ -152,28 +152,37 @@ export async function companiesPage(root) {
   async function draw() {
     const list = await api.get("/platform/companies");
     const act = async (fn, okMsg) => { try { await fn(); toast(okMsg, "success"); } catch (e) { toast(errorMessage(e), "error"); } await draw(); };
-    clear(holder).append(...(list.length ? list.map((c) => h("div", { class: "company-block" + (c.is_active ? "" : " inactive") },
-      h("div", { class: "company-head" },
-        h("div", null, h("strong", null, c.name), " ", statusBadge(c.is_active, "Active", "Suspended"), " ", statusBadge(c.ai_enabled, "AI on", "AI off"),
-          h("div", { class: "muted" }, `${c.owner_name ? c.owner_name + " (" + c.owner_email + ") . " : ""}${c.users} users · created ${c.created_at}`)),
-      h("div", { class: "row-actions" },
-        has("manage_client_users") ? button("Manage users", () => usersDialog(c, draw)) : null,
-        has("manage_compensation") ? button("Offer letter", () => go("/company/" + c.id + "/compensation")) : null,
-        can.creator() ? button("Add vendor", () => createVendorDialog(draw, `/platform/companies/${c.id}/vendors`, c.name)) : null,
-        has("manage_ai") ? button(c.ai_enabled ? "Turn AI off" : "Turn AI on", async () => {
-          if (c.is_active && !(await confirmBox("Turn AI on", `${c.name}'s CV text and job descriptions will be sent to ${state.meta?.ai_where || "the AI service"}. Only do this with the company's agreement.`, "Turn on"))) return;
-          act(() => api.patch("/platform/companies/" + c.id, { ai_enabled: !c.ai_enabled }), c.ai_enabled ? "AI turned off." : "AI turned on.");
+    const renderVendor = (company, vendor) => {
+      const people = vendor.people.map((user) => person(user, company.id, vendor.id));
+      const heading = h("div", { class: "node org" }, vendor.name, h("small", null, "vendor"),
+        vendor.is_active ? null : statusBadge(false, "", "Suspended"));
+      return h("li", { class: vendor.is_active ? "" : "off" }, heading, h("ul", null, people));
+    };
+    const renderCompany = (company) => {
+      const actions = [
+        has("manage_client_users") ? button("Manage users", () => usersDialog(company, draw)) : null,
+        has("manage_compensation") ? button("Offer letter", () => go("/company/" + company.id + "/compensation")) : null,
+        can.creator() ? button("Add vendor", () => createVendorDialog(draw, `/platform/companies/${company.id}/vendors`, company.name)) : null,
+        has("manage_ai") ? button(company.ai_enabled ? "Turn AI off" : "Turn AI on", async () => {
+          if (company.is_active && !(await confirmBox("Turn AI on", `${company.name}'s CV text and job descriptions will be sent to ${state.meta?.ai_where || "the AI service"}. Only do this with the company's agreement.`, "Turn on"))) return;
+          act(() => api.patch("/platform/companies/" + company.id, { ai_enabled: !company.ai_enabled }), company.ai_enabled ? "AI turned off." : "AI turned on.");
         }) : null,
-        has("manage_companies") ? button("Rename", () => renameDialog(c, draw)) : null,
-        has("manage_companies") ? button(c.is_active ? "Suspend": "Reactivate", async () => {
-          if (c.is_active && !(await confirmBox("Suspend company", `Everyone at ${c.name} (and its vendor) wil be signed out and unable to sign in until you reactivate it. Their data is kept.`, "Suspend", true))) return;
-          act(() => api.patch("/platform/companies/" + c.id, { is_active: !c.is_active }), c.is_active ? "Company suspended." : "Company reactivated.");
-        }) : null)),
-      h("ul", { class: "tree" },
-        c.people.map(person),
-        c.vendors.map((v) => h("li", { class: v.is_active ? "" : "off" },
-          h("div", { class: "node org" }, v.name, h("small", null, "vendor"), v.is_active ? null : statusBadge(false, "", "Suspended")),
-          h("ul", null, v.people.map((u) => person(u, c.id, v.id))))))) : [h("p", { class: "muted" }, "No companies yet.")]));
+        has("manage_companies") ? button("Rename", () => renameDialog(company, draw)) : null,
+        has("manage_companies") ? button(company.is_active ? "Suspend" : "Reactivate", async () => {
+          if (company.is_active && !(await confirmBox("Suspend company", `Everyone at ${company.name} (and its vendor) will be signed out and unable to sign in until you reactivate it. Their data is kept.`, "Suspend", true))) return;
+          act(() => api.patch("/platform/companies/" + company.id, { is_active: !company.is_active }), company.is_active ? "Company suspended." : "Company reactivated.");
+        }) : null,
+      ];
+      const companySummary = h("div", null,
+        h("strong", null, company.name), " ", statusBadge(company.is_active, "Active", "Suspended"), " ",
+        statusBadge(company.ai_enabled, "AI on", "AI off"),
+        h("div", { class: "muted" }, `${company.owner_name ? company.owner_name + " (" + company.owner_email + ") . " : ""}${company.users} users · created ${company.created_at}`));
+      const header = h("div", { class: "company-head" }, companySummary, h("div", { class: "row-actions" }, actions));
+      const tree = h("ul", { class: "tree" }, company.people.map(person), company.vendors.map((vendor) => renderVendor(company, vendor)));
+      return h("div", { class: "company-block" + (company.is_active ? "" : " inactive") }, header, tree);
+    };
+    const blocks = list.map(renderCompany);
+    clear(holder).append(...(blocks.length ? blocks : [h("p", { class: "muted" }, "No companies yet.")]));
   }
   root.append(
     pageHeader("Client companies", "Each company with its people, and the vendors it works with and their people. Their candidate data is not visible here.",
