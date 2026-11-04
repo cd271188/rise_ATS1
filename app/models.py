@@ -114,6 +114,7 @@ class Candidate(Base):
     primary_skill_role: Mapped[str | None] = mapped_column(Text)
     client: Mapped[str | None] = mapped_column(Text)
     job_req_id: Mapped[str | None] = mapped_column(Text)
+    process: Mapped[str] = mapped_column(String(40), default="Screening", server_default="Screening")
     profile_submitted_to_client: Mapped[str | None] = mapped_column(Text)
     client_submission_date: Mapped[str | None] = mapped_column(Text)
     recruiter_notes: Mapped[str | None] = mapped_column(Text)
