@@ -214,6 +214,28 @@ def create_company_vendor(ctx: Ctx, org_id: int, data: dict) -> dict:
     return {**vendors.vendor_dict(ctx.db, org), "temporary_password": temp}
 
 
+def reset_company_vendor_user_password(ctx: Ctx, org_id: int, vendor_id: int, uid: int) -> dict:
+    """Only the Rise creator can reset a user account belonging to a client's vendor."""
+    _need_creator(ctx)
+    client = _client(ctx, org_id)
+    vendor = ctx.db.get(Organization, vendor_id)
+    if not vendor or vendor.parent_org_id != client.id:
+        raise NotFound("vendor not found")
+    user = ctx.db.scalar(select(User).where(User.id == uid, User.org_id == vendor.id))
+    if not user:
+        raise NotFound("user not found")
+    temp = _temp()
+    user.password_hash = security.hash_password(temp)
+    user.must_change_password = True
+    revoke_all(ctx.db, user.id)
+    audit_company(ctx, "company.admin_account_change", client, "user", user.id,
+                  {"vendor": vendor.name, "email": user.email, "role": user.role, "change": "password reset"})
+    audit.record_raw(ctx.db, vendor.id, None, "user.reset_password_by_platform", ctx.ip,
+                     {"by": BY, "user_id": user.id, "client_id": client.id})
+    ctx.db.commit()
+    return {"temporary_password": temp}
+
+
 # --------------------------------------------- client user accounts
 def _client_user(ctx: Ctx, org: Organization, uid: int) -> User:
     u = ctx.db.scalar(select(User).where(User.id == uid, User.org_id == org.id))
