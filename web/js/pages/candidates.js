@@ -49,8 +49,12 @@ export async function candidatesPage(root, params) {
     columns: buildColumns(),
     load: (g) => api.get("/candidates" + qs({ q: q.value.trim(), duplicate: dup.value, vendor_id: vendor ? vendor.value: "", date_from: from.value, date_to: to.value, ...g })),
     canEdit: (row, col) => writable && !col.readonly && (can.admin() || state.user.org.team_edit || row.created_by === state.user.id),
-    save: (row, key, value) => key === "current_status"
-      ? api.patch(`/candidates/${row.candidate_id}/interview-status`, { status: value })
+    save: (row, key, value) => {
+      if (key === "current_status") {
+        return api.patch(`/candidates/${row.candidate_id}/interview-status`, { status: value });
+      }
+      return api.patch(`/candidates/${row.candidate_id}`, { [key]: value, version: row.version });
+    },
     rowActions: (row) => [
       h("a", { class: "icon-link", href: "#/candidate/" + row.candidate_id, title: "Open " + row.candidate_id, "aria-label": "Open " + row.candidate_id }, "↗"),
       writable ? h("button", { class: "icon-link", type: "button", title: "Add interview entry", "aria-label": "Add interview entry",
