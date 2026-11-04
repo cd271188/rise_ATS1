@@ -9,21 +9,23 @@ function failToForm(form, ex) {
   if (orphans.length || !Object.keys(ex.errors || {}).length) toast(orphans.join("; ") || errorMessage(ex), "error");
 }
 
-export function createVendorDialog(onDone) {
+export function createVendorDialog(onDone, endpoint = "/vendors", clientName = null) {
   const company = h("input", { type: "text", dataset: { name: "company" } });
   const ownerName = h("input", { type: "text", dataset: { name: "owner_name" } });
   const ownerEmail = h("input", { type: "email", dataset: { name: "owner_email" } });
   const save = h("button", { class: "btn primary", type: "submit" }, "Add vendor");
   const form = h("form", { class: "stack", novalidate: true },
     field("Vendor company name", company), field("Vendor owner's name", ownerName), field("Vendor owner's work email", ownerEmail),
-    h("p", { class: "muted" }, "The owner gets a temporary password and then adds their own recruiters. Their candidates join your pipeline; they only see the candidates they submitted."),
+    h("p", { class: "muted" }, clientName
+      ? `The owner gets a temporary password and then adds their own recruiters. Their submissions join ${clientName}'s pipeline.`
+      : "The owner gets a temporary password and then adds their own recruiters. Their candidates join your pipeline; they only see the candidates they submitted."),
     h("div", { class: "actions" }, button("Cancel", () => m.close()), save));
-  const m = modal("Add a vendor", form);
+  const m = modal(clientName ? `Add a vendor for ${clientName}` : "Add a vendor", form);
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     save.disabled = true;
     try {
-      const v = await api.post("/vendors", { company: company.value, owner_name: ownerName.value, owner_email: ownerEmail.value });
+      const v = await api.post(endpoint, { company: company.value, owner_name: ownerName.value, owner_email: ownerEmail.value });
       m.close();
       await onDone();
       showSecret("Vendor added", `Give ${v.owner_email} this temporary password to sign in for ${v.name}:`, v.temporary_password);
@@ -94,7 +96,7 @@ export async function vendorsPage(root) {
   }
   root.append(
     pageHeader("Vendors", "Companies you hire to source candidates. Their submissions appear in your pipeline tagged with the vendor's name.",
-      button("Add vendor", () => createDialog(draw), "primary")),
+      button("Add vendor", () => createVendorDialog(draw), "primary")),
     card(null, holder));
   await draw();
 }
