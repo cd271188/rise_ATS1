@@ -166,7 +166,7 @@ def create_company(ctx: Ctx, data: dict) -> dict:
                  role="owner", must_change_password=True)
     ctx.db.add(owner)
     ctx.db.flush()
-    audit_company(ctx, "company.create", "org", org.id, {"owner": email})
+    audit_company(ctx, "company.create", org, "org", org.id, {"owner": email})
     audit.record_raw(ctx.db, org.id, None, "org.created", ctx.ip, {"by": BY})
     ctx.db.commit()
     return {**company_dict(ctx.db, org), "temporary_password": temp}
