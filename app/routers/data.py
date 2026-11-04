@@ -56,6 +56,11 @@ def update_candidate(ref: str, data=Depends(json_body), ctx: Ctx = Depends(get_c
     return cand.update_candidate(ctx, ref, data)
 
 
+@router.patch("/candidates/{ref}/interview-status")
+def update_candidate_interview_status(ref: str, data=Depends(json_body), ctx: Ctx = Depends(get_ctx)):
+    return inter.set_current_status(ctx, ref, data.get("status"))
+
+
 @router.delete("/candidates/{ref}", status_code=204)
 def delete_candidate(ref: str, ctx: Ctx = Depends(get_ctx)):
     cand.delete_candidate(ctx, ref)
