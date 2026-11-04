@@ -140,8 +140,15 @@ async function usersDialog(c, onChange) {
 
 export async function companiesPage(root) {
   const holder = h("div");
-  const person = (u) => h("li", { class: u.is_active ? "" : "off" }, h("div", { class: "node" },
-    u.full_name, h("small", null, `${u.email} · ${u.role}`), u.is_active ? null : statusBadge(false, "", "Disabled")));
+  const person = (u, companyId = null, vendorId = null) => h("li", { class: u.is_active ? "" : "off" }, h("div", { class: "node" },
+    h("div", null, u.full_name, h("small", null, `${u.email} · ${u.role}`), u.is_active ? null : statusBadge(false, "", "Disabled")),
+    vendorId && can.creator() ? button("Reset password", async () => {
+      if (!(await confirmBox("Reset password", `Create a new temporary password for ${u.full_name}? Their sessions end immediately.`, "Reset"))) return;
+      try {
+        const r = await api.post(`/platform/companies/${companyId}/vendors/${vendorId}/users/${u.id}/reset-password`);
+        showSecret("Password reset", `New temporary password for ${u.email}:`, r.temporary_password);
+      } catch (e) { toast(errorMessage(e), "error"); }
+    }) : null));
   async function draw() {
     const list = await api.get("/platform/companies");
     const act = async (fn, okMsg) => { try { await fn(); toast(okMsg, "success"); } catch (e) { toast(errorMessage(e), "error"); } await draw(); };
@@ -166,7 +173,7 @@ export async function companiesPage(root) {
         c.people.map(person),
         c.vendors.map((v) => h("li", { class: v.is_active ? "" : "off" },
           h("div", { class: "node org" }, v.name, h("small", null, "vendor"), v.is_active ? null : statusBadge(false, "", "Suspended")),
-          h("ul", null, v.people.map(person))))))) : [h("p", { class: "muted" }, "No companies yet.")]));
+          h("ul", null, v.people.map((u) => person(u, c.id, v.id))))))) : [h("p", { class: "muted" }, "No companies yet.")]));
   }
   root.append(
     pageHeader("Client companies", "Each company with its people, and the vendors it works with and their people. Their candidate data is not visible here.",
