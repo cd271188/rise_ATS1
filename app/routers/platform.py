@@ -29,6 +29,11 @@ def create_company_vendor(org_id: int, data=Depends(_body), ctx: Ctx = Depends(g
     return svc.create_company_vendor(ctx, org_id, data)
 
 
+@router.post("/companies/{org_id}/vendors/{vendor_id}/users/{uid}/reset-password")
+def reset_company_vendor_user(org_id: int, vendor_id: int, uid: int, ctx: Ctx = Depends(get_ctx)):
+    return svc.reset_company_vendor_user_password(ctx, org_id, vendor_id, uid)
+
+
 @router.get("/companies/{org_id}/users")
 def company_users(org_id: int, ctx: Ctx = Depends(get_ctx)):
     return svc.list_company_users(ctx, org_id)
