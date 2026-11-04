@@ -207,7 +207,7 @@ def create_company_vendor(ctx: Ctx, org_id: int, data: dict) -> dict:
     _need_creator(ctx)
     client = _client(ctx, org_id)
     org, temp = vendors.build_vendor(ctx, client, data)
-    audit_company(ctx, "vendor.create", "org", org.id, {"client": client.name, "vendor": org.name})
+    audit_company(ctx, "vendor.create", org, "org", org.id, {"client": client.name, "vendor": org.name})
     audit.record_raw(ctx.db, client.id, None, "vendor.created_by_platform", ctx.ip, {"by": BY, "vendor_id": org.id})
     audit.record_raw(ctx.db, org.id, None, "org.created_as_vendor", ctx.ip, {"by": BY, "client": client.name})
     ctx.db.commit()
