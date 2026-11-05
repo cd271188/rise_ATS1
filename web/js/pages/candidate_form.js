@@ -125,7 +125,7 @@ export async function candidateFormPage(root, params) {
     const history_ = h("div");
     const drawHistory = async () => {
       const rows = await api.get("/interviews" + qs({ candidate_id: record.candidate_id }));
-      clear(history_).append(rows.length ? h("ol", { class: "timeline" }, rows.slice().reverse().map((r) => h("li", null,
+      clear(history_).append(rows.length ? h("ol", { class: "timeline" }, rows.slice().sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || ""))).map((r) => h("li", null,
         h("div", null, statusBadge(r.status), h("small", { class: "muted" }, ` Changed ${r.created_at || "date unavailable"}`))))) 
         : h("p", { class: "muted" }, "No interviews recorded yet."));
     };
