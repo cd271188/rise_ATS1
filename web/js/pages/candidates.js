@@ -11,13 +11,15 @@ function buildColumns() {
   const byKey = new Map(fields.map((f) => [f.key, f]));
   const hidden = new Set(["earliest_joining_date", "how_soon_can_join", "recruiter_notes"]);
   const order = ["full_name", ...fields.map((f) => f.key).filter((k) => k !== "full_name" && !hidden.has(k))];
+  const process = byKey.get("process");
   return [
     { key: "candidate_id", label: "ID", type: "text", readonly: true, width: WIDTHS.candidate_id, linkToDetails: true },
-    ...order.map((k) => {
+    ...order.filter((k) => k !== "process").map((k) => {
       const f = byKey.get(k);
       return { key: k, label: f.label, type: f.type, list: f.list, width: WIDTHS[k] || WIDTHS[f.type] || 160,
         ...(k === "full_name" ? { linkToDetails: true } : {}) };
     }),
+    { key: "process", label: process.label, type: "select", list: process.list, width: WIDTHS.process || WIDTHS.select },
     { key: "current_status", label: "Interview Status", type: "select", list: "status", width: 170 },
     ...((state.meta.vendors || []).length ? [{ key: "vendor", label: "Vendor", type: "text", readonly: true, sortable: false, filter: "none", width: 160 }] : []),
     { key: "last_updated", label: "Last updated", type: "text", readonly: true, filter: "none", width: 150 },
