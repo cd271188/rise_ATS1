@@ -68,7 +68,14 @@ def _sheet(wb, title, heading, columns, rows, first=False):
 
 
 def export_workbook(ctx: Ctx) -> bytes:
-    cands = cand_svc.list_candidates(ctx, limit=None)["items"]
+    cands = []
+    offset = 0
+    while True:
+        page = cand_svc.list_candidates(ctx, limit=200, offset=offset)
+        cands.extend(page["items"])
+        offset += len(page["items"])
+        if offset >= page["total"] or not page["items"]:
+            break
     interviews = int_svc.list_interviews(ctx)
     wb = Workbook()
     master = list(MASTER_COLUMNS) + ([("Vendor", "vendor")] if not ctx.vendor_id and any(c.get("vendor") for c in cands) else [])
