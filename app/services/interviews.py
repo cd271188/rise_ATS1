@@ -3,7 +3,7 @@ from sqlalchemy import select
 
 from ..fields import DEFAULT_STATUS, INTERVIEW_STATUSES
 from ..models import Candidate, Interview, utcnow
-from . import audit
+from . import audit, candidates
 from .candidates import check_can_edit, find_row, parse_ref, public_id, scope
 from .common import Ctx, Forbidden, NotFound, ValidationError
 from .validation import clean_interview
