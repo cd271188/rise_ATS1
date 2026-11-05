@@ -1,7 +1,6 @@
 import { api, qs } from "../api.js";
 import { h, clear, card, pageHeader, field, select, optionsFor, applyErrors, toast, errorMessage, button, can, state, statusBadge, confirmBox, debounce } from "../ui.js";
 import { go } from "../router.js";
-import { openInterviewForm } from "./interview_form.js";
 import { offerLettersCard } from "./offer.js";
 
 const SECTIONS = [
@@ -127,21 +126,11 @@ export async function candidateFormPage(root, params) {
     const drawHistory = async () => {
       const rows = await api.get("/interviews" + qs({ candidate_id: record.candidate_id }));
       clear(history_).append(rows.length ? h("ol", { class: "timeline" }, rows.slice().reverse().map((r) => h("li", null,
-        h("div", null, statusBadge(r.status), h("strong", null, `${r.interview_stage || "Interview"}`), h("small", { class: "muted" }, ` ${r.interview_date || r.created_at}`)),
-        r.feedback ? h("p", null, r.feedback) : null,
-        r.next_action ? h("p", { class: "muted" }, `Next: ${r.next_action}${r.next_followup_date ? " by " + r.next_followup_date : ""}`) : null))) 
+        h("div", null, statusBadge(r.status), h("small", { class: "muted" }, ` Changed ${r.created_at || "date unavailable"}`))))) 
         : h("p", { class: "muted" }, "No interviews recorded yet."));
     };
     await drawHistory();
-    root.append(card("Interview history", writable ? h("div", { class: "card-actions" }, button("Add interview entry", () => openInterviewForm({
-      candidate_id: record.candidate_id,
-      onSaved: async () => {
-        record = await api.get(`/candidates/${record.candidate_id}`);
-        clear(badge).append("Interview status: ", statusBadge(record.current_status));
-        await drawHistory();
-        toast(`Interview status is now ${record.current_status}.`, "info");
-      },
-    }), "primary")) : null, history_));
+    root.append(card("Interview history", history_));
     if (writable) {
       letters = offerLettersCard(record);
       root.append(letters.node);
