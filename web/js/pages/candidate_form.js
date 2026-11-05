@@ -1,7 +1,7 @@
 import { api, qs } from "../api.js";
 import { h, clear, card, pageHeader, field, select, optionsFor, applyErrors, toast, errorMessage, button, can, state, statusBadge, confirmBox, debounce } from "../ui.js";
 import { go } from "../router.js";
-import { offerLettersCard } from "./offer.js";
+import { offerLettersCard, offerReady } from "./offer.js";
 
 const SECTIONS = [
   ["Basics", ["date_added", "recruiter", "process", "full_name", "current_company", "current_location", "primary_skill_role"]],
@@ -87,7 +87,12 @@ export async function candidateFormPage(root, params) {
     for (const [k, el] of Object.entries(controls)) body[k] = el.value;
     try {
       if (editing) {
-        record = await api.patch(`/candidates/${record.candidate_id}`, { ...body, version: record.version });
+        Object.assign(record, await api.patch(`/candidates/${record.candidate_id}`, { ...body, version: record.version }));
+        letters?.refreshAvailability();
+        if (generateOffer) {
+          generateOffer.disabled = !offerReady(record);
+          generateOffer.title = offerReady(record) ? "Generate offer letter" : "Available when Process is HR Discussion and Interview Status is Yet to Offer";
+        }
         toast("Changes saved.", "success");
       } else {
         const created = await api.post("/candidates", body);
@@ -111,9 +116,15 @@ export async function candidateFormPage(root, params) {
 
   const badge = editing ? h("span", null, "Interview status: ", statusBadge(record.current_status)) : null;
   let letters = null;
+  const generateOffer = editing && can.owner() && !can.vendor() ? button("Generate offer letter", () => letters?.generate(), "primary") : null;
+  if (generateOffer) {
+    generateOffer.disabled = !offerReady(record);
+    generateOffer.title = offerReady(record) ? "Generate offer letter" : "Available when Process is HR Discussion and Interview Status is Yet to Offer";
+  }
   root.append(pageHeader(editing ? `${record.candidate_id} - ${record.full_name}` : "Add candidate",
     editing ? "Edit details, then review the interview history below." : "Fill in what you know. Required fields are marked with *.",
     badge,
+    generateOffer,
     editing && can.owner() && !can.vendor() ? button ("Generate offer letter", () => letters?.generate()) : null,
     editing && can.admin() ? button("Delete", async () => {
       if (!await confirmBox("Delete candidate", `Delete ${record.full_name}? They disappear from every list; the record is kept for audit.`, "Delete", true)) return;
