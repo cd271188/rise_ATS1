@@ -272,13 +272,14 @@ def update_candidate(ctx: Ctx, ref, data: dict) -> dict:
     changes.update(key_values(vals.get("full_name", c.full_name), vals.get("email", c.email),
                    vals.get("phone", c.phone)))
     changes.update(version=version + 1, last_updated=utcnow())
+    diff = {k: vals[k] for k in vals}
     res = ctx.db.execute(update(Candidate).where(Candidate.id == c.id, Candidate.version == version).values(**changes))
     if res.rowcount == 0:
         ctx.db.rollback()
         ctx.db.refresh(c)
         raise Conflict("this record was changed by someone else", to_dict(c, ctx.role, None, vendor_names(ctx, [c])))
-    ctx.db.commit()
     audit.record(ctx, "candidate.update", "candidate", public_id(c.seq), diff)
+    ctx.db.commit()
     ctx.db.refresh(c)
     return to_dict(c, ctx.role, dup_reasons(ctx, [c]).get(c.id), vendor_names(ctx, [c]))
 
