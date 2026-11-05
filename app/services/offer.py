@@ -1,4 +1,4 @@
-"""Offer letters: a company's compensation structure (built by Rise, accepted by the owner) and PDF generation for candidates."""
+"""Offer templates, compensation setup, and candidate-specific PDF generation."""
 import logging
 import re
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
@@ -217,6 +217,7 @@ def _view(s: OfferStructure, ctc: int | None = None) -> dict:
             preview_error = next(iter(e.errors.values()))
     return {"id": s.id, "version": s.version, "status": s.status, "template_name": s.template_name,
             "template_kind": s.template_kind, "has_template": bool(s.template_file), "components": comps,
+            "template_text": offer_docs.template_text(s.template_kind, s.template_file) if s.template_file else "",
             "events": s.events or [], "placeholders": _analysis(s), "preview": preview, "preview_error": preview_error,
             "sent_at": s.sent_at.strftime("%Y-%m-%d %H:%M") if s.sent_at else None,
             "decided_at": s.decided_at.strftime("%Y-%m-%d %H:%M") if s.decided_at else None}
@@ -226,7 +227,8 @@ def _state(db, org: Organization, ctc: int | None = None) -> dict:
     rows = _versions(db, org.id)
     current = next((s for s in rows if s.status in WORKING), None) or next((s for s in rows if s.status == "active"), None)
     active = next((s for s in rows if s.status == "active"), None)
-    return {"company": {"id": org.id, "name": org.name, "current": _view(current, ctc) if current else None},
+    return {"company": {"id": org.id, "name": org.name},
+            "current": _view(current, ctc) if current else None,
             "active_version": active.version if active else None,
             "versions": [{"version": s.version, "status": s.status} for s in rows]}
 
@@ -304,6 +306,27 @@ def rise_template(ctx: Ctx, org_id: int, blob: bytes, filename: str) -> dict:
     return _state(ctx.db, org)
 
 
+def _store_text_template(ctx: Ctx, s: OfferStructure, content: str, filename: str, rise: bool) -> None:
+    try:
+        blob = offer_docs.build_text_template(content)
+    except (ValueError, ImportError) as e:
+        raise ValidationError({"content": str(e)})
+    name = re.sub(r"[^A-Za-z0-9 .()-]", "", filename or "")[:120].strip() or "offer-letter.docx"
+    name = re.sub(r"\.(pdf|docx)$", "", name, flags=re.I) + ".docx"
+    s.template_file, s.template_kind, s.template_name = blob, "docx", name
+    _event(s, ctx, "template", name, rise)
+
+
+def rise_template_text(ctx: Ctx, org_id: int, data: dict) -> dict:
+    _need(ctx, "manage_compensation")
+    org = _client(ctx, org_id)
+    s = _editable(ctx, org, True)
+    _store_text_template(ctx, s, data.get("content", ""), data.get("filename", ""), True)
+    _audit_rise(ctx, org, "offer.template_save", s, {"file": s.template_name})
+    ctx.db.commit()
+    return _state(ctx.db, org)
+
+
 def rise_send(ctx: Ctx, org_id: int) -> dict:
     _need(ctx, "manage_compensation")
     org = _client(ctx, org_id)
@@ -312,7 +335,7 @@ def rise_send(ctx: Ctx, org_id: int) -> dict:
         raise Conflict("there is no draft to send" if not s else "this version is already with the owner")
     problems = []
     if not s.template_file:
-        problems.append("upload the offer letter template first")
+        problems.append("create the offer letter template first")
     else:
         info = _analysis(s)
         if info["error"]:
@@ -359,7 +382,7 @@ def rise_new_version(ctx: Ctx, org_id: int) -> dict:
 def _template_of(ctx: Ctx, org: Organization) -> tuple[bytes, str, str]:
     s = _working(ctx.db, org.id) or _active(ctx.db, org.id)
     if not s or not s.template_file:
-        raise NotFound("no template uploaded")
+        raise NotFound("no offer letter template has been created")
     return s.template_file, s.template_name or "offer-letter", s.template_kind
 
 
@@ -389,6 +412,15 @@ def owner_template(ctx: Ctx, blob: bytes, filename: str) -> dict:
     ctx.db.commit()
     return _state(ctx.db, org)
 
+
+def owner_template_text(ctx: Ctx, data: dict) -> dict:
+    org = _own_org(ctx, True)
+    s = _editable(ctx, org, False)
+    _store_text_template(ctx, s, data.get("content", ""), data.get("filename", ""), False)
+    audit.record(ctx, "offer.template_save", "offer_structure", s.id, {"version": s.version, "file": s.template_name})
+    ctx.db.commit()
+    return _state(ctx.db, org)
+  
 
 def owner_template_file(ctx: Ctx) -> tuple[bytes, str, str]:
     return _template_of(ctx, _own_org(ctx, False))
@@ -435,6 +467,11 @@ def _need_write(ctx: Ctx) -> None:
         raise Forbidden("your role is read-only")
 
 
+def _need_owner(ctx: Ctx) -> None:
+    if ctx.role != "owner" or ctx.org.is_platform or ctx.vendor_id:
+        raise Forbidden("only the company owner can generate offer letters")
+      
+
 def _accepted(ctx: Ctx) -> OfferStructure:
     s = _active(ctx.db, ctx.data_org_id)
     if not s or not s.template_file:
@@ -461,7 +498,7 @@ def letter_form(ctx: Ctx, ref) -> dict:
 
 
 def letter_preview(ctx: Ctx, ref, data: dict) -> dict:
-    _need_write(ctx)
+    _need_owner(ctx)
     get_row(ctx, ref)
     s = _accepted(ctx)
     return compute(s.components or [], parse_ctc(data.get("ctc")))
@@ -495,7 +532,7 @@ def _letter_dict(id: int, created_at, by: str | None, engine: str, version: int,
 
 
 def generate(ctx: Ctx, ref, data: dict) -> dict:
-    _need_write(ctx)
+    _need_owner(ctx)
     cand = get_row(ctx, ref)
     s = _accepted(ctx)
     values = _resolve(ctx, s, cand, data)
