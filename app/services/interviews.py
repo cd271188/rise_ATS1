@@ -73,14 +73,9 @@ def set_current_status(ctx: Ctx, ref: str, status: str) -> dict:
         raise ValidationError({"current_status": "choose a valid interview status"})
     cand = candidates.get_row(ctx, ref)
     check_can_edit(ctx, cand)
-    latest = ctx.db.scalar(select(Interview).where(
-        Interview.candidate_id == cand.id, Interview.org_id == cand.org_id
-    ).order_by(Interview.id.desc()).limit(1))
-    if latest:
-        latest.status = status
-    else:
-        ctx.db.add(Interview(org_id=cand.org_id, candidate_id=cand.id, created_by=ctx.user.id,
-                             interview_stage=cand.process, status=status))
+    # Keep each status change as its own dated history entry.
+    ctx.db.add(Interview(org_id=cand.org_id, candidate_id=cand.id, created_by=ctx.user.id,
+                         interview_stage=cand.process, status=status))
     ctx.db.flush()
     sync_status(ctx, cand)
     audit.record(ctx, "interview.status_update", "candidate", public_id(cand.seq), {"status": status})
