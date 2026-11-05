@@ -472,6 +472,11 @@ def _need_owner(ctx: Ctx) -> None:
         raise Forbidden("only the company owner can generate offer letters")
       
 
+def _require_offer_stage(cand: Candidate) -> None:
+    if cand.process != "HR Discussion" or cand.current_status != "Yet to Offer":
+        raise ValidationError({"offer": "offer letters are available only when Process is HR Discussion and Interview Status is Yet to Offer"})
+
+
 def _accepted(ctx: Ctx) -> OfferStructure:
     s = _active(ctx.db, ctx.data_org_id)
     if not s or not s.template_file:
@@ -489,6 +494,7 @@ def _automatic(ctx: Ctx, cand: Candidate) -> dict:
 def letter_form(ctx: Ctx, ref) -> dict:
     _need_write(ctx)
     cand = get_row(ctx, ref)
+    _require_offer_stage(cand)
     s = _accepted(ctx)
     groups = _analysis(s)
     auto = _automatic(ctx, cand)
@@ -499,7 +505,7 @@ def letter_form(ctx: Ctx, ref) -> dict:
 
 def letter_preview(ctx: Ctx, ref, data: dict) -> dict:
     _need_owner(ctx)
-    get_row(ctx, ref)
+    _require_offer_stage(get_row(ctx, ref))
     s = _accepted(ctx)
     return compute(s.components or [], parse_ctc(data.get("ctc")))
 
@@ -534,6 +540,7 @@ def _letter_dict(id: int, created_at, by: str | None, engine: str, version: int,
 def generate(ctx: Ctx, ref, data: dict) -> dict:
     _need_owner(ctx)
     cand = get_row(ctx, ref)
+    _require_offer_stage(cand)
     s = _accepted(ctx)
     values = _resolve(ctx, s, cand, data)
     try:
@@ -572,4 +579,5 @@ def download(ctx: Ctx, letter_id: int) -> tuple[bytes, str]:
     cand = letter and ctx.db.scalar(select(Candidate).where(*scope(ctx), Candidate.id == letter.candidate_id))
     if not letter or not cand:
         raise NotFound("offer letter not found")
+    _require_offer_stage(cand)
     return letter.pdf, f"Offer_{public_id(cand.seq)}_{letter.created_at:%Y%m%d}.pdf"
