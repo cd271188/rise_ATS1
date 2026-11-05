@@ -175,7 +175,7 @@ export function createGrid({ columns, load, canEdit, save, rowActions, onChange,
       arrows[i].parentElement.setAttribute("aria-sort", active ? (st.dir === "asc" ? "ascending" : "descending") : "none");
     });
     const from = st.rows.length ? st.offset + 1 : 0;
-    info.textContent = st.total ? '${from}-${st.offset + st.rows.length} if ${st.total}' : "0 rows";
+    info.textContent = st.total ? `Showing ${from}–${st.offset + st.rows.length} of ${st.total}` : "0 rows";
     prev.disabled = st.offset === 0;
     next.disabled = st.offset + st.limit >= st.total;
     paintSel();
