@@ -33,7 +33,7 @@ const ROUTES = [
   { path: "/reports", title: "Reports", nav: "Reports", icon: "目", render: reportsPage },
   { path: "/settings", title: "Settings", nav: "Settings", icon: "⚙️", admin: true, render: settingsPage },
   { path: "/vendors", title: "Vendors", nav: "Vendors", icon: "🏭", admin: true, client: true, render: vendorsPage },
-  { path: "/offer", title: "Offer letter", nav: "Offer letter", icon: "", admin: true, client: true, render: offerPage },
+  { path: "/offer", title: "Offer letter", nav: "Offer letter", icon: "📄", admin: true, client: true, render: offerPage },
   { path: "/team", title: "Team", nav: "Team", icon: "👥", admin: true, render: teamPage },
   { path: "/audit", title: "Audit log", nav: "Audit", icon: "✎", admin: true, render: auditPage },
   { path: "/account", title: "My account", render: accountPage },
