@@ -3,9 +3,8 @@ import { api, qs } from "../api.js";
 import { h, clear, card, pageHeader, table, field, modal, button, applyErrors, toast, errorMessage, confirmBox, can } from "../ui.js";
 import { go } from "../router.js";
 
-export const MAX_TEMPLATE = 2 * 1024 * 1024;
 export const STATUS = { draft: "Draft", in_review: "In review", changes_requested: "Changes requested", active: "Accepted", superseded: "Replaced" };
-const EVENT = { created: "Started", saved: "Compensation saved", template: "Template uploaded", sent: "Sent for review", accepted: "Accepted", feedback: "Feedback", note: "Note" };
+const EVENT = { created: "Started", saved: "Compensation saved", template: "Template saved", sent: "Sent for review", accepted: "Accepted", feedback: "Feedback", note: "Note" };
 const KIND = { earning: "Earning", employer: "Employer cost", deduction: "Deduction" };
 const GROUPS = [
   ["automatic", "Filled in automatically from the portal"],
@@ -53,21 +52,31 @@ export function eventsList(events) {
     e.note && e.kind !== "saved" ? h("p", null, e.note) : null)));
 }
 
-// A button that opens a file picker for the letter template and sends the chosen file to `path`.
-export function uploadButton(path, text, onDone) {
-  const input = h("input", { type: "file", accept: ".docx,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document", hidden: true });
-  input.addEventListener("change", async () => {
-    const file = input.files[0];
-    input.value = "";
-    if (!file) return;
-    if (file.size > MAX_TEMPLATE) { toast("The template must be smaller than 2 MB.", "error"); return; }
-    try {
-      const state = await api.putFile(path + "?filename=" + encodeURIComponent(file.name), await file.arrayBuffer());
-      toast("Template uploaded.", "success");
-      await onDone(state);
-    } catch (e) { toast(e.errors?.template || errorMessage(e), "error"); }
+export function templateEditorButton(path, current, onDone) {
+  return button(current?.has_template ? "Edit letter template" : "Create letter template", () => {
+    const name = h("input", { type: "text", maxlength: 120, value: current?.template_name?.replace(/\.(pdf|docx)$/i, "") || "offer-letter", placeholder: "Offer letter name" });
+    const content = h("textarea", { rows: 18, maxlength: 30000, placeholder: "Write the offer letter. Use {{candidate_name}}, {{candidate_id}}, {{company_name}}, {{offer_date}}, {{ctc_annual}}, and compensation keys such as {{basic_annual}}.", value: current?.template_text || "" });
+    const save = h("button", { class: "btn primary", type: "button" }, "Save template");
+    const body = h("div", { class: "stack" },
+      current?.template_kind === "pdf" && !current.template_text ? h("p", { class: "notice warn" }, "This older PDF template cannot be loaded into the editor. Enter its content here to replace it with an editable template.") : null,
+      field("Template name", name), field("Offer letter content", content),
+      h("p", { class: "muted" }, "Use {{field_name}} for values filled automatically or requested when an offer is generated. Use one paragraph per line."),
+      h("div", { class: "actions" }, button("Cancel", () => m.close()), save));
+    const m = modal("Offer letter template editor", body, { wide: true });
+    save.addEventListener("click", async () => {
+      save.disabled = true;
+      try {
+        const state = await api.put(path, { filename: name.value, content: content.value });
+        m.close();
+        toast("Offer letter template saved.", "success");
+        await onDone(state);
+      } catch (e) {
+        const why = e.errors?.content || errorMessage(e);
+        toast(why, "error");
+        save.disabled = false;
+      }
+    });
   });
-  return h("span", null, button(text, () => input.click()), input);
 }
 
 export const withExt = (name, kind) => (name.toLowerCase().endsWith("." + kind) ? name : name + "." + kind);
@@ -111,7 +120,7 @@ export async function offerPage(root) {
       case "draft": return "Rise Consulting is preparing this. You will be asked to review it when it is ready." + other;
       case "in_review": return (owner ? "Please read the letter and the compensation below, then accept it or send your feedback." : "Waiting for the company owner to accept it.") + other;
       case "changes_requested": return "The feedback has gone to Rise Consulting, who will send a corrected version." + other;
-      default: return "Accepted. Owners, admins, recruiters and vendors can now make offer letters from a candidate's page. Only Rise Consulting can change this; leave a note if something needs to change.";
+      default: return "Accepted. The company owner can generate offer letters from a candidate's page. Recruiters and vendor users can download generated letters. Only Rise Consulting can change this set-up; leave a note if something needs to change.";
     }
   }
 
@@ -120,9 +129,9 @@ export async function offerPage(root) {
     const canUpload = owner && (!cur || ["draft", "changes_requested"].includes(cur.status));
     if (!cur) {
       return [card("Offer letter",
-        h("p", null, "Upload your company's offer letter as a Word (.docx) or text-based PDF file. Write each detail that changes from one letter to the next as a {{placeholder}}, for example {{candidate_name}}, {{joining_date}} or {{basic_annual}}."),
+        h("p", null, "Create your company's offer letter template here. Write each detail that changes from one letter to the next as a {{placeholder}}, for example {{candidate_name}}, {{joining_date}} or {{basic_annual}}."),
         h("p", { class: "muted" }, "Rise Consulting will then set up the compensation structure behind the placeholders and send it to you to review."),
-        owner ? uploadButton("/offer-structure/template", "Upload offer letter", draw) : h("p", { class: "muted" }, "The company owner has not uploaded an offer letter yet."))];
+        owner ? templateEditorButton("/offer-structure/template/text", cur, draw) : h("p", { class: "muted" }, "The company owner has not created an offer letter template yet."))];
     }
     const out = [card(`Offer letter set-up · version ${cur.version}`,
       h("div", null, statusBadge(cur.status)),
@@ -137,10 +146,9 @@ export async function offerPage(root) {
         owner && cur.status !== "in_review" ? button("Leave a note for Rise", () => feedbackDialog(true)) : null))];
 
     out.push(card("Letter template",
-      cur.has_template ? h("div", null, h("strong", null, cur.template_name), " ", h("small", { class: "muted" }, cur.template_kind === "pdf" ? "PDF" : "Word"),
-        h("div", { class: "card-actions" }, button("Download", () => api.download("/offer-structure/template", withExt(cur.template_name, cur.template_kind)).catch((e) => toast(errorMessage(e), "error"))),
-          canUpload ? uploadButton("/offer-structure/template", "Replace template", draw) : null)) :
-        h("div", null, h("p", { class: "muted" }, "No template yet."), canUpload ? uploadButton("/offer-structure/template", "Upload offer letter", draw) : null),
+      cur.has_template ? h("div", null, h("strong", null, cur.template_name), " ", h("small", { class: "muted" }, "Editable text template"),
+        canUpload ? h("div", { class: "card-actions" }, templateEditorButton("/offer-structure/template/text", cur, draw)) : null) :
+        h("div", null, h("p", { class: "muted" }, "No template yet."), canUpload ? templateEditorButton("/offer-structure/template/text", cur, draw) : null),
       cur.has_template ? placeholderSummary(cur.placeholders) : null));
 
     const sample = h("input", { type: "text", inputmode: "numeric", placeholder: "e.g. 1200000", value: ctc, "aria-label": "Annual CTC to try" });
@@ -160,7 +168,7 @@ export async function offerPage(root) {
     clear(holder).append(...view(st));
   }
 
-  root.append(pageHeader("Offer letter", "Your offer letter template and the compensation structure Rise Consulting has set up for it."), holder);
+  root.append(pageHeader("Offer letter", "Create your letter template, then review the compensation structure Rise Consulting prepares for it."), holder);
   await draw();
 }
 
@@ -235,7 +243,7 @@ export function offerLettersCard(record) {
     } catch (e) { clear(list).append(h("p", { class: "muted" }, errorMessage(e))); }
   };
   const generate = () => generateOfferDialog(record, draw);
-  const node = card("Offer letters", h("div", { class: "card-actions" }, button("Generate offer letter", generate, "primary")), list);
+  const node = card("Offer letters", can.owner() && !can.vendor() ? h("div", { class: "card-actions" }, button("Generate offer letter", generate, "primary")) : null, list);
   draw();
   return { node, generate };
 }
