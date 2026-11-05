@@ -50,6 +50,27 @@ def validate_template(blob: bytes) -> str:
     return kind
 
 
+def build_text_template(content: str) -> bytes:
+    """Turn the owner's plain-text letter draft into a Word template for the existing renderer."""
+    import docx
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("enter the offer letter content")
+    if len(content) > 30000:
+        raise ValueError("keep the offer letter under 30,000 characters")
+    doc = docx.Document()
+    for line in content.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        doc.add_paragraph(line)
+    out = io.BytesIO()
+    doc.save(out)
+    return out.getvalue()
+
+
+def template_text(kind: str, blob: bytes) -> str:
+    if kind != "docx":
+        return ""
+    return "\n".join(p.text for p in _docx_paragraphs(_open_docx(blob)))
+
+
 def _open_docx(blob: bytes):
     import docx
     try:
