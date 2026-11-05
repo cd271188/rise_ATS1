@@ -19,8 +19,8 @@ function buildColumns() {
       return { key: k, label: f.label, type: f.type, list: f.list, width: WIDTHS[k] || WIDTHS[f.type] || 160,
         ...(k === "full_name" ? { linkToDetails: true } : {}) };
     }),
-    { key: "process", label: process.label, type: "select", list: process.list, width: WIDTHS.process || WIDTHS.select },
-    { key: "current_status", label: "Interview Status", type: "select", list: "status", width: 170 },
+    { key: "process", label: process.label, type: "select", list: process.list, inlineSelect: true, width: WIDTHS.process || WIDTHS.select },
+    { key: "current_status", label: "Interview Status", type: "select", list: "status", inlineSelect: true, width: 170 },
     ...((state.meta.vendors || []).length ? [{ key: "vendor", label: "Vendor", type: "text", readonly: true, sortable: false, filter: "none", width: 160 }] : []),
     { key: "last_updated", label: "Last updated", type: "text", readonly: true, filter: "none", width: 150 },
   ];
