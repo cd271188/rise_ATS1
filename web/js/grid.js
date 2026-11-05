@@ -129,6 +129,17 @@ export function createGrid({ columns, load, canEdit, save, rowActions, onChange,
   function paint(td, row, col) {
     clear(td);
     const t = text(row, col);
+    if (col.inlineSelect) {
+      const input = select(optionsFor(col.list), t, { class: "grid-inline-select", "aria-label": col.label });
+      input.addEventListener("mousedown", (e) => e.stopPropagation());
+      input.addEventListener("click", (e) => e.stopPropagation());
+      input.addEventListener("change", () => {
+        if (input.value !== t) saveCell(row, col, td, input.value);
+      });
+      td.append(input);
+      td.title = col.label;
+      return;
+    }
     if (col.linkToDetails) {
       const link = h("a", { class: "grid-detail-link", href: "#/candidate/" + encodeURIComponent(row.candidate_id),
         onclick: (e) => { e.preventDefault(); go("/candidate/" + encodeURIComponent(row.candidate_id)); } }, t);
