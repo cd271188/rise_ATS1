@@ -284,8 +284,11 @@ export function createGrid({ columns, load, canEdit, save, rowActions, onChange,
           toast("Someone else changed this row. The latest values are shown - repeat your edit.", "warn", 8000);
         } else {
           const why = (ex.errors && ex.errors[col.key]) || errorMessage(ex);
-          td.classList.add("cell-error");
-          td.title = why;
+          if (col.inlineSelect) repaintRow(row);
+          else {
+            td.classList.add("cell-error");
+            td.title = why;
+          }
           setMsg(`${col.label}: ${why}`, true);
           toast(`${col.label}: ${why}`, "error");
         }
