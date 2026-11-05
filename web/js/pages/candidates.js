@@ -12,10 +12,11 @@ function buildColumns() {
   const hidden = new Set(["earliest_joining_date", "how_soon_can_join", "recruiter_notes"]);
   const order = ["full_name", ...fields.map((f) => f.key).filter((k) => k !== "full_name" && !hidden.has(k))];
   return [
-    { key: "candidate_id", label: "ID", type: "text", readonly: true, width: WIDTHS.candidate_id },
+    { key: "candidate_id", label: "ID", type: "text", readonly: true, width: WIDTHS.candidate_id, linkToDetails: true },
     ...order.map((k) => {
       const f = byKey.get(k);
-      return { key: k, label: f.label, type: f.type, list: f.list, width: WIDTHS[k] || WIDTHS[f.type] || 160 };
+      return { key: k, label: f.label, type: f.type, list: f.list, width: WIDTHS[k] || WIDTHS[f.type] || 160,
+        ...(k === "full_name" ? { linkToDetails: true } : {}) };
     }),
     { key: "current_status", label: "Interview Status", type: "select", list: "status", width: 170 },
     ...((state.meta.vendors || []).length ? [{ key: "vendor", label: "Vendor", type: "text", readonly: true, sortable: false, filter: "none", width: 160 }] : []),
@@ -56,7 +57,7 @@ export async function candidatesPage(root, params) {
       return api.patch(`/candidates/${row.candidate_id}`, { [key]: value, version: row.version });
     },
     rowActions: (row) => [
-      h("a", { class: "icon-link", href: "#/candidate/" + row.candidate_id, title: "Open " + row.candidate_id, "aria-label": "Open " + row.candidate_id }, "↗"),
+      h("span", { class: "icon-link", title: "Candidate details open from the ID or name" }, "↗"),
       writable ? h("button", { class: "icon-link", type: "button", title: "Add interview entry", "aria-label": "Add interview entry",
         onclick: () => openInterviewForm({ candidateId: row.candidate_id, onSaved: () => grid.reload() }) }, "📅") : null,
       can.admin() ? h("button", { class: "icon-link danger-text", type: "button", title: "Delete", "aria-label": "Delete " + row.candidate_id,
