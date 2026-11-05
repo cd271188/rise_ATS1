@@ -1,6 +1,7 @@
 // Editable, server-paginated data grid. Cells save one at a time through opts.save(row, key, value) (PATCH + version).
 import { ApiError } from "./api.js";
 import { h, clear, toast, errorMessage, select, optionsFor, statusBadge, debounce } from "./ui.js";
+import { go } from "./router.js";
 
 const ACTION_W = 104;
 const MIN_W = 60;
@@ -128,6 +129,13 @@ export function createGrid({ columns, load, canEdit, save, rowActions, onChange,
   function paint(td, row, col) {
     clear(td);
     const t = text(row, col);
+    if (col.linkToDetails) {
+      const link = h("a", { class: "grid-detail-link", href: "#/candidate/" + encodeURIComponent(row.candidate_id),
+        onclick: (e) => { e.preventDefault(); go("/candidate/" + encodeURIComponent(row.candidate_id)); } }, t);
+      td.append(link);
+      td.title = "Open candidate details";
+      return;
+    }
     if (col.key === "current_status") td.append(statusBadge(t));
     else td.textContent = t;
     td.title = t;
