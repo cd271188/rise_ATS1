@@ -80,6 +80,7 @@ export function templateEditorButton(path, current, onDone) {
 }
 
 export const withExt = (name, kind) => (name.toLowerCase().endsWith("." + kind) ? name : name + "." + kind);
+export const offerReady = (candidate) => candidate?.process === "HR Discussion" && candidate?.current_status === "Yet to Offer";
 
 // ---------------------------------------------------------------- the owner's page
 export async function offerPage(root) {
@@ -234,16 +235,31 @@ export async function generateOfferDialog(record, onDone) {
 // The "Offer letters" card on a candidate. Returns { node, generate } so the page header can open the same dialog.
 export function offerLettersCard(record) {
   const list = h("div");
+  const downloads = [];
+  const make = button("Generate offer letter", () => generate(), "primary");
+  const refreshAvailability = () => {
+    const ready = offerReady(record);
+    make.disabled = !ready;
+    make.title = ready ? "Generate offer letter" : "Available when Process is HR Discussion and Interview Status is Yet to Offer";
+    downloads.forEach((download) => { download.disabled = !ready; download.title = make.title; });
+  };
   const draw = async () => {
     try {
       const rows = await api.get(`/candidates/${record.candidate_id}/offer-letters`);
-      clear(list).append(table(["Made on", "Made by", "Set-up version", ""], rows.map((r) => h("tr", null,
-        h("td", null, r.created_at), h("td", null, r.generated_by || ""), h("td", null, "v" + r.version),
-        h("td", { class: "row-actions" }, button("Download PDF", () => api.download(`/offer-letters/${r.id}/pdf`, r.filename).catch((e) => toast(errorMessage(e), "error"))))))));
+      downloads.length = 0;
+      const rowsEl = rows.map((r) => {
+        const download = button("Download PDF", () => api.download(`/offer-letters/${r.id}/pdf`, r.filename).catch((e) => toast(errorMessage(e), "error")));
+        downloads.push(download);
+        return h("tr", null, h("td", null, r.created_at), h("td", null, r.generated_by || ""), h("td", null, "v" + r.version),
+          h("td", { class: "row-actions" }, download));
+      });
+      clear(list).append(table(["Made on", "Made by", "Set-up version", ""], rowsEl));
+      refreshAvailability();
     } catch (e) { clear(list).append(h("p", { class: "muted" }, errorMessage(e))); }
   };
   const generate = () => generateOfferDialog(record, draw);
-  const node = card("Offer letters", can.owner() && !can.vendor() ? h("div", { class: "card-actions" }, button("Generate offer letter", generate, "primary")) : null, list);
+  refreshAvailability();
+  const node = card("Offer letters", can.owner() && !can.vendor() ? h("div", { class: "card-actions" }, make) : null, list);
   draw();
-  return { node, generate };
+  return { node, generate, refreshAvailability };
 }
