@@ -1,8 +1,7 @@
-// Rise Consulting: review a company's offer letter template and set up compensation components.
+// Client owner: create, review, and approve the offer letter template and compensation setup.
 import { api, qs } from "../api.js";
-import { h, clear, card, pageHeader, field, button, toast, errorMessage, confirmBox, state } from "../ui.js";
-import { go } from "../router.js";
-import { breakup, placeholderSummary, eventsList, templateEditorButton, uploadSampleButton, withExt } from "./offer.js";
+import { h, clear, card, pageHeader, field, button, toast, errorMessage, confirmBox, can, modal } from "../ui.js";
+import { breakup, placeholderSummary, eventsList, templateEditorButton, uploadSampleButton } from "./offer.js";
 
 const KINDS = [["earning", "Earning (paid to the employee)"], ["employer", "Employer cost (part of CTC)"], ["deduction", "Deduction (outside CTC)"]];
 const CALCS = [["pct_ctc", "% of CTC"], ["pct_basic", "% of Basic"], ["fixed", "Fixed amount"], ["balance", "Balance of the CTC"]];
@@ -22,15 +21,27 @@ const toDraft = (list) => list.map((c) => ({ key: c.key, label: c.label, kind: c
 const toBody = (draft) => draft.map((c) => ({ key: c.key.trim(), label: c.label, kind: c.kind, calc: c.calc,
   value: c.calc === "balance" ? null : c.value === "" ? "" : Number(c.value), period: c.calc === "fixed" ? c.period : null }));
 
+function previewTemplate() {
+  return button("Preview draft", async () => {
+    try {
+      const url = URL.createObjectURL(await api.getBlob("/offer-structure/template/preview"));
+      const frame = h("iframe", { title: "Offer letter template preview", class: "offer-template-frame", src: url });
+      let m;
+      m = modal("Offer letter draft preview", h("div", null, frame,
+        h("div", { class: "actions" }, button("Close", () => { m.close(); URL.revokeObjectURL(url); })) ), { wide: true });
+    } catch (e) { toast(errorMessage(e), "error"); }
+  });
+}
+
 function options(list, value) {
   const s = h("select", null, list.map(([v, t]) => h("option", { value: v }, t)));
   s.value = value;
   return s;
 }
 
-export async function compensationPage(root, { id }) {
-  const base = `/platform/companies/${id}/offer-structure`;
-  const manage = (state.user.platform_permissions || []).includes("manage_compensation");
+export async function compensationPage(root) {
+  const base = "/offer-structure";
+  const manage = can.owner() && !can.vendor();
   const holder = h("div", { class: "stack" });
   let st = await api.get(base);
   let draft = toDraft(st.current?.components || []);
@@ -84,31 +95,33 @@ export async function compensationPage(root, { id }) {
   function view() {
     const cur = st.current;
     const status = cur?.status;
-    const editable = manage && (!cur || status === "draft" || status === "changes_requested");
+    const editable = manage && (!cur || ["draft", "changes_requested", "in_review"].includes(status));
     const feedback = status === "changes_requested" ? cur.events.slice().reverse().find((e) => e.kind === "feedback") : null;
     const out = [];
 
-    if (feedback) out.push(h("div", { class: "notice warn" }, h("strong", null, "The owner asked for changes"), h("small", { class: "muted" }, ` (${feedback.at}${feedback.by ? " · " + feedback.by : ""})`), h("p", null, feedback.note)));
-    if (cur && status === "active") out.push(h("div", { class: "notice" }, 'Version ${cur.version} is accepted and in use. ' + (manage ? "To change anything, start a new version; this one stays in use until the owner accepts the new one.": "")));
-    if (cur && status === "in_review") out.push(h("div", { class: "notice" }, "This version is with the company owner for review and cannot be changed until they respond."));
+    if (feedback) out.push(h("div", { class: "notice warn" }, h("strong", null, "This draft needs changes"), h("small", { class: "muted" }, ` (${feedback.at}${feedback.by ? " · " + feedback.by : ""})`), h("p", null, feedback.note)));
+    if (cur && status === "active") out.push(h("div", { class: "notice" }, `Version ${cur.version} is approved and active. Start a new draft to make changes.`));
 
     out.push(card(cur ? `Version ${cur.version}` : "Not started",
       h("div", null, cur ? statusBadge(cur.status) : h("span", { class: "muted" }, "Nothing has been set up for this company yet.")),
       st.active_version && status !== "active" ? h("small", { class: "muted" }, ` Version ${st.active_version} stays in use until this one is accepted.`) : null,
-      manage && status === "active" ? h("div", { class: "card-actions" }, button("Start a new version", () => run(() => api.post(base + "/new-version"), "New version started."), "primary")) : null));
+      manage && status === "active" ? h("div", { class: "card-actions" }, button("Start a new draft", () => run(() => api.post(base + "/new-version"), "New draft started."), "primary")) : null));
 
     out.push(card("Offer letter template",
-      h("p", { class: "muted" }, "Prepare the offer letter template from the owner's sample. Replace sample-specific details with placeholders such as {{candidate_name}}, {{designation}}, {{offer_date}} and compensation fields such as {{basic_annual}}."),
+      h("p", { class: "muted" }, "Upload your sample or create the template in the editor. Replace sample-specific details with placeholders such as {{candidate_name}}, {{designation}}, {{offer_date}} and compensation fields such as {{basic_annual}}."),
       cur?.has_template ? h("div", null, h("strong", null, cur.template_name), " ", h("small", { class: "muted" }, cur.template_kind === "docx" ? "Word template" : "PDF template")) : h("p", { class: "muted" }, "No template created yet."),
         h("div", { class: "card-actions" },
-          cur?.has_template ? button("Download sample", () => api.download(base + "/template", withExt(cur.template_name, cur.template_kind)).catch((e) => toast(errorMessage(e), "error"))) : null,
           editable ? uploadSampleButton(base + "/template", async (s) => { st = s; draft = toDraft(s.current?.components || []); draw(); }, "Upload revised template") : null,
           editable ? templateEditorButton(base + "/template/text", cur, async (s) => { st = s; draft = toDraft(s.current?.components || []); draw(); }) : null),
       cur?.has_template ? placeholderSummary(cur.placeholders) : null));
 
+    if (cur?.has_template) out.push(card("Review template",
+      h("p", { class: "muted" }, "Preview the offer letter with placeholder labels. Edit the draft above if the wording or fields need changes."),
+      previewTemplate()));
+    
     out.push(card("Compensation components", editor(editable)));
-    if (editable) out.push(h("div", { class: "card-actions" }, button("Save", () => run(save, "Saved."), "primary")));
-    if (!manage) out.push(h("p", { class: "muted" }, "You can look at this but not change it. Ask the creator for the compensation permission."));
+    if (editable) out.push(h("div", { class: "card-actions" }, button("Save draft", () => run(save, "Draft saved."), "primary")));
+    if (!manage) out.push(h("p", { class: "muted" }, "Only the client company owner can edit or approve this offer setup."));
 
     if (cur?.components.length) {
       const sample = h("input", { type: "text", inputmode: "numeric", placeholder: "e.g. 1200000", value: ctc, "aria-label": "Annual CTC to try" });
@@ -118,12 +131,17 @@ export async function compensationPage(root, { id }) {
     }
 
     if (editable && cur) {
-      out.push(card("Send to the company owner",
-        h("p", { class: "muted" }, "This saves your changes and locks the set-up while the owner reviews it. They can accept it or send feedback."),
-        h("div", { class: "card-actions" }, button("Send for review", async () => {
-          if (!await confirmBox("Send for review", `${st.company.name}'s owner will be asked to review and accept this set-up. You cannot change it until they respond.`, "Send")) return;
-          try { await save(); } catch (e) { toast(e.errors?.structure || errorMessage(e), "error"); return; }
-          run(() => api.post(base + "/send"), "Sent to the company owner.");
+      out.push(card("Review and approve",
+        h("p", { class: "muted" }, "Review the template preview and compensation breakup above. Approving activates this version for offer generation and downloads."),
+        h("div", { class: "card-actions" }, button("Approve offer letter setup", async () => {
+          if (!(await confirmBox("Approve offer letter setup", "This template and compensation structure will become active. Offer letters can then be generated for eligible candidates.", "Approve"))) return;
+          try {
+            st = await save();
+            st = await api.post(base + "/accept");
+            draft = toDraft(st.current?.components || []);
+            toast("Offer setup approved.", "success");
+          } catch (e) { toast(e.errors?.structure || errorMessage(e), "error"); }
+          draw();
         }, "primary"))));
     }
 
@@ -135,6 +153,6 @@ export async function compensationPage(root, { id }) {
     clear(holder).append(...view());
   }
 
-  root.append(pageHeader("Offer letter set-up: " + st.company.name, "The letter template and the compensation structure behind its pay fields.", button("Back to companies", () => go("/platform"))), holder);
+  root.append(pageHeader("Offer letter", "Upload or edit your template, configure compensation, review the draft in the page, and approve it here."), holder);
   draw();
 }
