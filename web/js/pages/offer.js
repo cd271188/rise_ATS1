@@ -53,6 +53,36 @@ export function eventsList(events) {
     e.note && e.kind !== "saved" ? h("p", null, e.note) : null)));
 }
 
+function escapeEditorText(value) {
+  return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\"/g, "&quot;");
+}
+
+function editorHtml(text) {
+  const lines = String(text || "").split(/\r?\n/);
+  const blocks = [];
+  for (let i = 0; i < lines.length;) {
+    if (lines[i].includes("|")) {
+      const rows = [];
+      while (i < lines.length && lines[i].includes("|")) {
+        rows.push(lines[i++].split("|").map((cell) => `<td>${escapeEditorText(cell.trim())}</td>`).join(""));
+      }
+      blocks.push(`<table><tbody>${rows.map((row) => `<tr>${row}</tr>`).join("")}</tbody></table>`);
+    } else {
+      blocks.push(`<p>${lines[i] ? escapeEditorText(lines[i]) : "<br>"}</p>`);
+      i += 1;
+    }
+  }
+  return blocks.join("") || "<p><br></p>";
+}
+
+function compensationAnnexure(components = []) {
+  const esc = escapeEditorText;
+  const rows = components.map((c) => `<tr><td>${esc(c.label)}</td><td>{{${esc(c.key)}_annual}}</td><td>{{${esc(c.key)}_monthly}}</td></tr>`);
+  rows.push("<tr><th>Gross earnings</th><th>{{gross_annual}}</th><th>{{gross_monthly}}</th></tr>");
+  rows.push("<tr><th>Annual CTC</th><th>{{ctc_annual}}</th><th>{{ctc_monthly}}</th></tr>");
+  return `<h2>ANNEXURE A — ANNUAL COMPENSATION STRUCTURE</h2><table><thead><tr><th>Component</th><th>Per annum (INR)</th><th>Per month (INR)</th></tr></thead><tbody>${rows.join("")}</tbody></table><p><br></p>`;
+}
+
 export function uploadSampleButton(path, onDone, label = "Upload offer letter sample", onBusy = () => {}) {
   const input = h("input", { type: "file", accept: ".docx,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document", hidden: true });
   const upload = button(label, () => input.click());
@@ -95,21 +125,37 @@ export function uploadSampleButton(path, onDone, label = "Upload offer letter sa
 export function templateEditorButton(path, current, onDone) {
   return button(current?.has_template ? "Edit offer letter draft" : "Create offer letter draft", () => {
     const name = h("input", { type: "text", maxlength: 120, value: current?.template_name?.replace(/\.(pdf|docx)$/i, "") || "offer-letter", placeholder: "Offer letter name" });
-    const content = h("textarea", { rows: 18, maxlength: 30000, placeholder: "Write the offer letter. Likely candidate details are suggested as placeholders; review them, then add {{ctc_annual}} and compensation keys such as {{basic_annual}}.", value: current?.template_text || "" });
-    const save = h("button", { class: "btn primary", type: "button" }, "Save template");
+    const content = h("div", { class: "offer-rich-editor", contenteditable: "true", role: "textbox", "aria-label": "Offer letter content", "aria-multiline": "true" });
+    content.innerHTML = editorHtml(current?.template_text || "");
+    const tool = (label, title, action) => {
+      const b = button(label, () => { content.focus(); action(); });
+      b.title = title;
+      b.addEventListener("mousedown", (event) => event.preventDefault());
+      return b;
+    };
+    const toolbar = h("div", { class: "offer-editor-toolbar", role: "toolbar", "aria-label": "Offer letter formatting" },
+      tool("B", "Bold", () => document.execCommand("bold")),
+      tool("I", "Italic", () => document.execCommand("italic")),
+      tool("U", "Underline", () => document.execCommand("underline")),
+      tool("H2", "Heading", () => document.execCommand("formatBlock", false, "h2")),
+      tool("• List", "Bulleted list", () => document.execCommand("insertUnorderedList")),
+      tool("Insert table", "Insert a table", () => document.execCommand("insertHTML", false, "<table><tbody><tr><th>Component</th><th>Per annum (INR)</th><th>Per month (INR)</th></tr><tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr></tbody></table><p><br></p>")),
+      current?.components?.length ? tool("Insert compensation Annexure A", "Insert a compensation table using this version's components", () => document.execCommand("insertHTML", false, compensationAnnexure(current.components))) : null);
+    const save = h("button", { class: "btn primary", type: "button" }, "Save offer letter");
     const body = h("div", { class: "stack" },
       current?.template_kind === "pdf" ? h("p", { class: "notice warn" }, "Text was extracted from this PDF sample. Saving it converts the letter to an editable Word template; PDF layout and styling may change. Scanned PDFs without selectable text cannot be converted.") : null,
       current?.template_text ? h("p", { class: "notice" }, "Likely candidate fields are shown as placeholders. Review each suggestion before saving.") : null,
-      field("Template name", name), field("Offer letter content", content),
-      h("p", { class: "muted" }, "Use {{field_name}} for values filled automatically or requested when an offer is generated. Use one paragraph per line."),
+      field("Offer letter name", name), h("label", { class: "field-label" }, "Offer letter content"), toolbar, content,
+      h("p", { class: "muted" }, "Use {{field_name}} for values filled automatically or requested when an offer is generated. Use the compensation Annexure button to add the component table."),
       h("div", { class: "actions" }, button("Cancel", () => m.close()), save));
     const m = modal("Offer letter draft editor", body, { wide: true });
     save.addEventListener("click", async () => {
       save.disabled = true;
       try {
-        const state = await api.put(path, { filename: name.value, content: content.value });
+        if (content.innerText.length > 30000) throw new Error("Keep the offer letter under 30,000 characters.");
+        const state = await api.put(path, { filename: name.value, content: content.innerHTML });
         m.close();
-        toast("Offer letter template saved.", "success");
+        toast("Offer letter draft saved.", "success");
         await onDone(state);
       } catch (e) {
         const why = e.errors?.content || errorMessage(e);
