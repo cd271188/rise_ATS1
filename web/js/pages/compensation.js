@@ -123,6 +123,15 @@ export async function compensationPage(root) {
       cur && editable ? h("div", { class: "card-actions" }, button("Open draft", () => document.getElementById("offer-letter-editor-button")?.click())) : null,
       manage && status === "active" ? h("div", { class: "card-actions" }, button("Start a new draft", () => run(() => api.post(base + "/new-version"), "New draft started."), "primary")) : null));
 
+    const compensationCard = card("Compensation components", editor(editable));
+    compensationCard.id = "offer-draft-editor";
+    out.push(compensationCard);
+    if (editable) {
+      saveDraftButton = button("Save draft", () => run(save, "Draft saved."), "primary");
+      saveDraftButton.disabled = templateUploading;
+      out.push(h("div", { class: "card-actions" }, saveDraftButton));
+    } else saveDraftButton = null;
+    
     out.push(card("Offer letter sample",
       h("p", { class: "muted" }, "Upload a sample offer letter or create one in the editor. We suggest placeholders for recognizable candidate fields; review those suggestions and add compensation fields such as {{ctc_annual}} and {{basic_annual}}."),
       cur?.has_template ? h("div", null, h("strong", null, cur.template_name), " ", h("small", { class: "muted" }, cur.template_kind === "docx" ? "Word template" : "PDF template")) : h("p", { class: "muted" }, "No template created yet."),
@@ -135,14 +144,6 @@ export async function compensationPage(root) {
       h("p", { class: "muted" }, "Preview the offer letter with placeholder labels. Edit the draft above if the wording or fields need changes."),
       previewTemplate()));
     
-    const compensationCard = card("Compensation components", editor(editable));
-    compensationCard.id = "offer-draft-editor";
-    out.push(compensationCard);
-    if (editable) {
-      saveDraftButton = button("Save draft", () => run(save, "Draft saved."), "primary");
-      saveDraftButton.disabled = templateUploading;
-      out.push(h("div", { class: "card-actions" }, saveDraftButton));
-    } else saveDraftButton = null;
     if (!manage) out.push(h("p", { class: "muted" }, "Only the client company owner can edit or approve this offer setup."));
 
     if (cur?.components.length) {
