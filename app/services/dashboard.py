@@ -73,23 +73,23 @@ def recruiter_report(ctx: Ctx) -> list[dict]:
     return _report(_names(ctx, rows), rows)
 
 
-def dashboard(ctx: Ctx, on: date | None = None) -> dict:
+def dashboard(ctx: Ctx, on: date | None = None, start: date | None = None, end: date | None = None) -> dict:
     on = on or ctx.today()
+    start = start or week_start(on)
+    end = end or (week_start(on) + timedelta(days=6))
     nxt = (on.replace(day=28) + timedelta(days=4)).replace(day=1)
     periods = {"today": (on, on), "week": (week_start(on), week_start(on) + timedelta(days=6)),
                "month": (on.replace(day=1), nxt - timedelta(days=1))}
-    rows = _rows(ctx)
-    names = _names(ctx, rows)
-
-    def inside(value, p):
-        return bool(value) and periods[p][0].isoformat() <= value <= periods[p][1].isoformat()
+    all_rows = _rows(ctx)
+    rows = [r for r in all_rows if r.date_added and start.isoformat() <= r.date_added <= end.isoformat()]
+    names = _names(ctx, all_rows)
 
     def table(field, only_yes):
         out = []
         for n in names:
-            mine = [r for r in rows if r.recruiter == n and (not only_yes or r.profile_submitted_to_client == "Yes")]
-            out.append({"recruiter": n, **{p: sum(inside(getattr(r, field), p) for r in mine) for p in periods}})
-        out.append({"recruiter": "Total", **{p: sum(x[p] for x in out) for p in periods}})
+            mine = [r for r in all_rows if r.recruiter == n and (not only_yes or r.profile_submitted_to_client == "Yes")]
+            out.append({"recruiter": n, "selected": sum(bool(getattr(r, field)) and start.isoformat() <= getattr(r, field) <= end.isoformat() for r in mine)})
+        out.append({"recruiter": "Total", "selected": sum(x["selected"] for x in out)})
         return out
 
     statuses = {s: 0 for s in INTERVIEW_STATUSES}
@@ -97,6 +97,7 @@ def dashboard(ctx: Ctx, on: date | None = None) -> dict:
         statuses[r.current_status] = statuses.get(r.current_status, 0) + 1
     return {
         "as_of": on.isoformat(),
+        "selected_range": [start.isoformat(), end.isoformat()],
         "periods": {p: [a.isoformat() for a in v] for p, v in periods.items()},
         "kpis": {
             "total_candidates": len(rows),
