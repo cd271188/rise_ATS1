@@ -66,6 +66,16 @@ def owner_get(ctc: str = "", ctx: Ctx = Depends(get_ctx)):
     return svc.owner_get(ctx, ctc)
 
 
+@router.put("/offer-structure")
+def owner_save(data=Depends(json_body), ctx: Ctx = Depends(get_ctx)):
+    return svc.owner_save(ctx, data)
+
+
+@router.post("/offer-structure/new-version")
+def owner_new_version(ctx: Ctx = Depends(get_ctx)):
+    return svc.owner_new_version(ctx)
+
+
 @router.put("/offer-structure/template")
 async def owner_template(request: Request, filename: str = "", ctx: Ctx = Depends(get_ctx)):
     return svc.owner_template(ctx, await _upload(request, ctx), filename)
@@ -79,6 +89,12 @@ def owner_template_text(data=Depends(json_body), ctx: Ctx = Depends(get_ctx)):
 @router.get("/offer-structure/template")
 def owner_template_file(ctx: Ctx = Depends(get_ctx)):
     return _file(svc.owner_template_file(ctx))
+
+
+@router.get("/offer-structure/template/preview")
+def owner_template_preview(ctx: Ctx = Depends(get_ctx)):
+    return Response(svc.owner_template_preview(ctx), media_type="application/pdf",
+                    headers={"Content-Disposition": 'inline; filename="offer-template-preview.pdf"'})
 
 
 @router.post("/offer-structure/accept")
