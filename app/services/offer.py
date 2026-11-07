@@ -579,5 +579,8 @@ def download(ctx: Ctx, letter_id: int) -> tuple[bytes, str]:
     cand = letter and ctx.db.scalar(select(Candidate).where(*scope(ctx), Candidate.id == letter.candidate_id))
     if not letter or not cand:
         raise NotFound("offer letter not found")
+    structure = ctx.db.get(OfferStructure, letter.structure_id)
+    if not structure or structure.status not in ("active", "superseded"):
+        raise Forbidden("this offer letter cannot be downloaded until its set-up is approved")
     _require_offer_stage(cand)
     return letter.pdf, f"Offer_{public_id(cand.seq)}_{letter.created_at:%Y%m%d}.pdf"
