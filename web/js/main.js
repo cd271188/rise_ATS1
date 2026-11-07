@@ -7,8 +7,8 @@ import { candidateFormPage } from "./pages/candidate_form.js";
 import { candidatesPage } from "./pages/candidates.js";
 import { interviewsPage } from "./pages/interviews.js";
 import { reportsPage } from "./pages/reports.js";
-import { settingsPage, accountPage } from "./pages/settings.js";
-import { teamPage, auditPage } from "./pages/team.js";
+import { accountPage } from "./pages/settings.js";
+import { teamPage } from "./pages/team.js";
 import { companiesPage, staffPage, activityPage } from "./pages/platform.js";
 import { vendorsPage } from "./pages/vendors.js";
 import { compensationPage } from "./pages/compensation.js";
@@ -29,11 +29,9 @@ const ROUTES = [
   { path: "/jobs/:ref", title: "Job", render: jobPage },
   { path: "/interviews", title: "Interviews", nav: "Interviews", icon: "📅", render: interviewsPage },
   { path: "/reports", title: "Reports", nav: "Reports", icon: "目", render: reportsPage },
-  { path: "/settings", title: "Settings", nav: "Settings", icon: "⚙️", admin: true, render: settingsPage },
   { path: "/vendors", title: "Vendors", nav: "Vendors", icon: "🏭", admin: true, client: true, render: vendorsPage },
   { path: "/offer", title: "Offer letter", nav: "Offer letter", icon: "📄", admin: true, client: true, render: compensationPage },
   { path: "/team", title: "Team", nav: "Team", icon: "👥", admin: true, render: teamPage },
-  { path: "/audit", title: "Audit log", nav: "Audit", icon: "✎", admin: true, render: auditPage },
   { path: "/account", title: "My account", render: accountPage },
 ];
 
@@ -55,7 +53,7 @@ function allowed(route) {
   return !route.creator || can.creator();
 }
 if (route.platform) return false;
-if (can.vendor() && (route.client || route.path === "/settings")) return false;
+if (can.vendor() && route.client) return false;
 return (!route.admin || can.admin()) && (!route.write || can.write());
 }
 
