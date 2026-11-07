@@ -6,10 +6,11 @@ import { breakup, placeholderSummary, templateEditorButton, uploadSampleButton, 
 const KINDS = [["earning", "Earning (paid to the employee)"], ["employer", "Employer cost (part of CTC)"], ["deduction", "Deduction (outside CTC)"]];
 const CALCS = [["pct_ctc", "% of CTC"], ["pct_basic", "% of Basic"], ["fixed", "Fixed amount"], ["balance", "Balance of the CTC"]];
 const TYPICAL = [
-  { key: "basic", label: "Basic", kind: "earning", calc: "pct_ctc", value: "40", period: "monthly" },
-  { key: "hra", label: "House rent allowance", kind: "earning", calc: "pct_basic", value: "50", period: "monthly" },
-  { key: "employer_pf", label: "Employer PF", kind: "employer", calc: "pct_basic", value: "12", period: "monthly" },
-  { key: "special", label: "Special allowance", kind: "earning", calc: "balance", value: "", period: "monthly" },
+  { key: "basic", label: "Basic Salary", kind: "earning", calc: "pct_ctc", value: "40", period: "monthly" },
+  { key: "hra", label: "House Rent Allowance (HRA)", kind: "earning", calc: "pct_basic", value: "50", period: "monthly" },
+  { key: "special", label: "Special Allowance", kind: "earning", calc: "balance", value: "", period: "monthly" },
+  { key: "employer_pf", label: "Employer Provident Fund (PF)", kind: "employer", calc: "pct_basic", value: "12", period: "monthly" },
+  { key: "gratuity", label: "Gratuity", kind: "employer", calc: "pct_basic", value: "4.81", period: "monthly" },
 ];
 
 const slug = (label) => {
@@ -18,6 +19,22 @@ const slug = (label) => {
 };
 const blank = () => ({ key: "", label: "", kind: "earning", calc: "pct_ctc", value: "", period: "monthly", auto: true });
 const toDraft = (list) => list.map((c) => ({ key: c.key, label: c.label, kind: c.kind, calc: c.calc, value: c.value === null ? "" : String(c.value), period: c.period || "monthly", auto: false }));
+const withStandardParticulars = (components) => {
+  const rows = [...components];
+  const hasBalance = rows.some((c) => c.calc === "balance");
+  for (const standard of TYPICAL) {
+    const existing = rows.find((c) => c.key === standard.key);
+    if (existing) {
+      existing.label = standard.label;
+      existing.kind = standard.kind;
+      continue;
+    }
+    rows.push(standard.key === "special" && hasBalance
+      ? { ...standard, calc: "fixed", value: "0", period: "annual", auto: false }
+      : { ...standard, auto: false });
+  }
+  return rows;
+};
 const toBody = (draft) => draft.map((c) => ({ key: c.key.trim(), label: c.label, kind: c.kind, calc: c.calc,
   value: c.calc === "balance" ? null : c.value === "" ? "" : Number(c.value), period: c.calc === "fixed" ? c.period : null }));
 
@@ -44,7 +61,12 @@ export async function compensationPage(root) {
   const manage = can.owner() && !can.vendor();
   const holder = h("div", { class: "stack" });
   let st = await api.get(base);
-  let draft = toDraft(st.current?.components || []);
+  const editableState = (state) => manage && (!state.current || ["draft", "changes_requested", "in_review"].includes(state.current.status));
+  const draftFromState = (state) => {
+    const components = toDraft(state.current?.components || []);
+    return editableState(state) ? withStandardParticulars(components) : components;
+  };
+  let draft = draftFromState(st);
   let ctc = "";
   let templateUploading = false;
   let saveDraftButton = null;
@@ -58,7 +80,7 @@ export async function compensationPage(root) {
 
   const reload = async (fromServer = false) => {
     st = await api.get(base + qs({ ctc }));
-    if (fromServer) draft = toDraft(st.current?.components || []);
+    if (fromServer) draft = draftFromState(st);
     draw();
   };
   const run = async (fn, okMsg) => {
@@ -66,7 +88,7 @@ export async function compensationPage(root) {
       toast("Wait for the template upload to finish before saving the draft.", "warn");
       return;
     }
-    try { st = await fn(); draft = toDraft(st.current?.components || []); if (okMsg) toast(okMsg, "success"); } catch (e) { toast(e.errors?.structure || errorMessage(e), "error"); }
+    try { st = await fn(); draft = draftFromState(st); if (okMsg) toast(okMsg, "success"); } catch (e) { toast(e.errors?.structure || errorMessage(e), "error"); }
     draw();
   };
   const save = () => api.put(base, { components: toBody(draft) });
@@ -76,14 +98,15 @@ export async function compensationPage(root) {
     const paint = () => {
       clear(body);
       draft.forEach((c, i) => {
-        const key = h("input", { type: "text", value: c.key, maxlength: 30, "aria-label": "Key", disabled: !editable });
-        const label = h("input", { type: "text", value: c.label, maxlength: 60, "aria-label": "Particulars", disabled: !editable });
+        const standard = TYPICAL.some((item) => item.key === c.key)
+        const key = h("input", { type: "text", value: c.key, maxlength: 30, "aria-label": "Key", disabled: !editable || standard });
+        const label = h("input", { type: "text", value: c.label, maxlength: 60, "aria-label": "Particulars", disabled: !editable || standard });
         const kind = options(KINDS, c.kind);
         const calc = options(CALCS, c.calc);
         const value = h("input", { type: "number", step: "any", min: "0", value: c.value, "aria-label": "Value", disabled: !editable || c.calc === "balance" });
         const period = options([["monthly", "per month"], ["annual", "per year"]], c.period);
         period.hidden = c.calc !== "fixed";
-        for (const el of [kind, calc, period]) el.disabled = !editable;
+        for (const el of [kind, calc, period]) el.disabled = !editable || (standard && el === kind);
         label.addEventListener("input", () => {
           c.label = label.value;
           if (c.auto) { c.key = slug(label.value); key.value = c.key; }
@@ -94,7 +117,7 @@ export async function compensationPage(root) {
         value.addEventListener("input", () => { c.value = value.value; });
         period.addEventListener("change", () => { c.period = period.value; });
         body.append(h("tr", null, h("td", null, label), h("td", null, key), h("td", null, kind), h("td", null, calc), h("td", null, value, period),
-          h("td", { class: "row-actions" }, editable ? button("Remove", () => { draft.splice(i, 1); paint(); }) : null)));
+          h("td", { class: "row-actions" }, editable ? button("Remove", () => { if (standard) { toast("Keep the standard compensation particular in the structure.", "warn"); return; } draft.splice(i, 1); paint(); }) : null)));
       });
       if (!draft.length) body.append(h("tr", null, h("td", { colspan: 6, class: "empty" }, "No components yet.")));
     };
@@ -103,7 +126,7 @@ export async function compensationPage(root) {
       h("div", { class: "table-wrap" }, h("table", { class: "data" }, h("thead", null, h("tr", null, ["Particulars", "key (used in the letter)", "Type", "How it is worked out", "Value", ""].map((x) => h("th", null, x)))), body)),
       editable ? h("div", { class: "card-actions" },
         button("Add component", () => { draft.push(blank()); paint(); }),
-        draft.length ? null : button("Start from a typical structure", () => { draft = TYPICAL.map((c) => ({ ...c, auto: false })); paint(); })) : null,
+        null) : null,
       h("p", { class: "muted" }, "In the letter, use {{key_annual}} and {{key_monthly}} for each component, for example ",
         h("code", null, "{{basic_annual}}"), ". Totals are {{ctc_annual}}, {{ctc_monthly}}, {{gross_annual}} and {{gross_monthly}}. The CTC for each letter is entered when it is made."));
   }
@@ -134,7 +157,7 @@ export async function compensationPage(root) {
       h("p", { class: "muted" }, "Upload a sample offer letter or create one in the editor. We suggest placeholders for recognizable candidate fields; review those suggestions and add compensation fields such as {{ctc_annual}} and {{basic_annual}}."),
       cur?.has_template ? h("div", null, h("strong", null, cur.template_name), " ", h("small", { class: "muted" }, cur.template_kind === "docx" ? "Word template" : "PDF template")) : h("p", { class: "muted" }, "No template created yet."),
         h("div", { class: "card-actions" },
-          editable ? uploadSampleButton(base + "/template", async (s) => { st = s; draft = toDraft(s.current?.components || []); draw(); }, cur?.has_template ? "Upload revised offer letter sample" : "Upload offer letter sample", setTemplateUploading) : null,
+          editable ? uploadSampleButton(base + "/template", async (s) => { st = s; draw(); }, cur?.has_template ? "Upload revised offer letter sample" : "Upload offer letter sample", setTemplateUploading) : null,
           editLetterButton),
       cur?.has_template ? placeholderSummary(cur.placeholders) : null));
 
