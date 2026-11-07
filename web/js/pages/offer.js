@@ -28,10 +28,11 @@ export function componentTable(components) {
 }
 
 export function breakup(p) {
-  const rows = p.rows.map((r) => h("tr", null, h("td", null, r.label), h("td", null, KIND[r.kind] || r.kind), h("td", { class: "num" }, r.annual_text), h("td", { class: "num" }, r.monthly_text)));
-  rows.push(h("tr", null, h("td", null, h("strong", null, "Gross (earnings)")), h("td", null, ""), h("td", { class: "num" }, h("strong", null, p.gross_text)), h("td", { class: "num" }, h("strong", null, p.gross_monthly_text))));
-  rows.push(h("tr", null, h("td", null, h("strong", null, "Annual CTC")), h("td", null, ""), h("td", { class: "num" }, h("strong", null, p.ctc_text)), h("td", { class: "num" }, h("strong", null, p.ctc_monthly))));
-  return h("div", null, table(["Component", "Type", "Per year (INR)", "Per month (INR)"], rows),
+  const rows = p.rows.map((r) => h("tr", null,
+    h("td", null, r.kind === "total" ? h("strong", null, r.label) : r.label),
+    h("td", { class: "num" }, r.kind === "total" ? h("strong", null, r.annual_text) : r.annual_text),
+    h("td", { class: "num" }, r.kind === "total" ? h("strong", null, r.monthly_text) : r.monthly_text)));
+  return h("div", null, table(["Particulars", "Annual Amount (INR)", "Monthly Amount (INR)"], rows),
     p.unallocated ? h("p", { class: "notice warn" }, `INR ${p.unallocated_text} of the CTC is not allocated to any component.`) : null);
 }
 
@@ -90,10 +91,20 @@ function editorHtml(text, components = []) {
 
 function compensationAnnexure(components = []) {
   const esc = escapeEditorText;
-  const rows = components.map((c) => `<tr><td>${esc(c.label)}</td><td>{{${esc(c.key)}_annual}}</td><td>{{${esc(c.key)}_monthly}}</td></tr>`);
-  rows.push("<tr><th>Gross earnings</th><th>{{gross_annual}}</th><th>{{gross_monthly}}</th></tr>");
-  rows.push("<tr><th>Annual CTC</th><th>{{ctc_annual}}</th><th>{{ctc_monthly}}</th></tr>");
-  return `<h2>ANNEXURE A — ANNUAL COMPENSATION STRUCTURE</h2><table><thead><tr><th>Component</th><th>Per annum (INR)</th><th>Per month (INR)</th></tr></thead><tbody>${rows.join("")}</tbody></table><p><br></p>`;
+  const priority = { basic: 0, hra: 1, special: 2, employer_pf: 0, gratuity: 1 };
+  const ordered = [...components].sort((a, b) => {
+    const group = { earning: 0, employer: 1, deduction: 2 };
+    return (group[a.kind] ?? 3) - (group[b.kind] ?? 3) || (priority[a.key] ?? 10) - (priority[b.key] ?? 10) || a.key.localeCompare(b.key);
+  });
+  const earnings = ordered.filter((c) => c.kind === "earning");
+  const employerCosts = ordered.filter((c) => c.kind === "employer");
+  const deductions = ordered.filter((c) => c.kind === "deduction");
+  const componentRow = (c) => `<tr><td>${esc(c.label)}</td><td>{{${esc(c.key)}_annual}}</td><td>{{${esc(c.key)}_monthly}}</td></tr>`;
+  const rows = earnings.map(componentRow);
+  rows.push("<tr><th>Gross Salary</th><th>{{gross_annual}}</th><th>{{gross_monthly}}</th></tr>");
+  rows.push(...employerCosts.map(componentRow), ...deductions.map(componentRow));
+  rows.push("<tr><th>Total Annual CTC</th><th>{{ctc_annual}}</th><th>{{ctc_monthly}}</th></tr>");
+  return `<h2>ANNEXURE A — ANNUAL COMPENSATION STRUCTURE</h2><table><thead><tr><th>Particulars</th><th>Annual Amount (INR)</th><th>Monthly Amount (INR)</th></tr></thead><tbody>${rows.join("")}</tbody></table><p><br></p>`;
 }
 
 export function uploadSampleButton(path, onDone, label = "Upload offer letter sample", onBusy = () => {}) {
