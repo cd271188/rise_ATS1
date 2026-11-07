@@ -38,7 +38,7 @@ export async function dashboardPage(root) {
         const updated = await api.get("/dashboard" + qs({ from_date: from.value, to_date: to.value }));
         if (id === requestId) renderDashboard(root, updated, due, from.value, to.value, rangeToolbar);
       } catch (e) { toast(e.message || "Could not load dashboard for this date range.", "error"); }
-    } } }, "Apply dates"));
+    } }, "Apply dates"));
   renderDashboard(root, d, due, initialFrom, initialTo, rangeToolbar);
 }
 
@@ -63,5 +63,5 @@ function renderDashboard(root, d, due, from, to, rangeToolbar) {
       card("Profiles submitted to clients", periodTable(d.client_submissions))),
     card("Job requirements by client company", d.requirements_by_company?.length
       ? requirementTable(d.requirements_by_company)
-      : h("p", { class: "muted" }, "No job requirements have been added yet."))));
+      : h("p", { class: "muted" }, "No job requirements have been added yet.")));
 }
