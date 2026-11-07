@@ -92,6 +92,7 @@ input:disabled, select:disabled, textarea:disabled { background: #f0f2f6; color:
 .toolbar > select {width: auto; }
 .toolbar input[type=data] { width: auto; }
 .toolbar label.inline { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+.dashboard-range input[type=date] { width: 160px; }
 
 /* -------- layout -------- */
 .shell { display: flex; min-height: 100vh; }
