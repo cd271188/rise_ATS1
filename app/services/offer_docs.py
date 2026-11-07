@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import threading
 import zipfile
+from html.parser import HTMLParser
 from functools import lru_cache
 from pathlib import Path
 from xml.sax.saxutils import escape
@@ -51,10 +52,14 @@ def validate_template(blob: bytes) -> str:
 
 
 def build_text_template(content: str) -> bytes:
-    """Turn the owner's plain-text letter draft into a Word template for the existing renderer."""
+    """Turn plain text or sanitized editor HTML into a Word template."""
     import docx
     if not isinstance(content, str) or not content.strip():
         raise ValueError("enter the offer letter content")
+    if len(content) > 100000:
+        raise ValueError("keep the formatted offer letter under 30,000 characters of text")
+    if re.search(r"<(?:p|div|br|b|strong|i|em|u|h[1-3]|table|thead|tbody|tr|td|th|ul|ol|li)\b", content, re.I):
+        return _build_rich_text_template(content, docx)
     if len(content) > 30000:
         raise ValueError("keep the offer letter under 30,000 characters")
     doc = docx.Document()
@@ -75,6 +80,115 @@ def build_text_template(content: str) -> bytes:
         for ri, row in enumerate(rows):
             for ci in range(count):
                 table.cell(ri, ci).text = row[ci] if ci < len(row) else ""
+    out = io.BytesIO()
+    doc.save(out)
+    return out.getvalue()
+
+
+def _build_rich_text_template(content: str, docx_module) -> bytes:
+    """Parse only simple formatting and table tags; ignore attributes and unsafe elements."""
+    allowed = {"p", "div", "br", "b", "strong", "i", "em", "u", "h1", "h2", "h3",
+               "table", "thead", "tbody", "tr", "td", "th", "ul", "ol", "li"}
+
+    class Tree(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.root = {"tag": "root", "children": []}
+            self.stack = [self.root]
+
+        def handle_starttag(self, tag, _attrs):
+            tag = tag.lower()
+            if tag not in allowed:
+                return
+            node = {"tag": tag, "children": []}
+            self.stack[-1]["children"].append(node)
+            if tag != "br":
+                self.stack.append(node)
+
+        def handle_startendtag(self, tag, attrs):
+            self.handle_starttag(tag, attrs)
+            if tag.lower() != "br" and self.stack[-1].get("tag") == tag.lower():
+                self.stack.pop()
+
+        def handle_endtag(self, tag):
+            tag = tag.lower()
+            for index in range(len(self.stack) - 1, 0, -1):
+                if self.stack[index].get("tag") == tag:
+                    del self.stack[index:]
+                    break
+
+        def handle_data(self, data):
+            self.stack[-1]["children"].append(data)
+
+    parser = Tree()
+    parser.feed(content)
+    def text_length(node):
+        if isinstance(node, str):
+            return len(node)
+        return sum(text_length(child) for child in node["children"])
+    if text_length(parser.root) > 30000:
+        raise ValueError("keep the offer letter under 30,000 characters of text")
+    doc = docx_module.Document()
+
+    def inline(node, paragraph, bold=False, italic=False, underline=False):
+        if isinstance(node, str):
+            if node:
+                run = paragraph.add_run(node)
+                run.bold, run.italic, run.underline = bold, italic, underline
+            return
+        tag = node["tag"]
+        if tag in {"p", "div", "table", "ul", "ol", "li", "tr", "td", "th", "thead", "tbody", "root"}:
+            for child in node["children"]:
+                inline(child, paragraph, bold, italic, underline)
+            return
+        if tag == "br":
+            paragraph.add_run().add_break()
+            return
+        inline(node, paragraph, bold or tag in {"b", "strong"}, italic or tag in {"i", "em"}, underline or tag == "u")
+
+    def descendants(node, tag):
+        found = []
+        if isinstance(node, dict):
+            if node["tag"] == tag:
+                found.append(node)
+            for child in node["children"]:
+                found.extend(descendants(child, tag))
+        return found
+
+    def add_blocks(node):
+        if isinstance(node, str):
+            if node.strip():
+                doc.add_paragraph(node)
+            return
+        tag = node["tag"]
+        if tag == "table":
+            rows = descendants(node, "tr")
+            matrix = [[cell for cell in row["children"] if isinstance(cell, dict) and cell["tag"] in {"td", "th"}] for row in rows]
+            if matrix:
+                width = max(len(row) for row in matrix)
+                table = doc.add_table(rows=len(matrix), cols=width)
+                table.style = "Table Grid"
+                for ri, row in enumerate(matrix):
+                    for ci, cell_node in enumerate(row):
+                        inline(cell_node, table.cell(ri, ci).paragraphs[0], bold=cell_node["tag"] == "th")
+            return
+        if tag in {"p", "h1", "h2", "h3", "li", "b", "strong", "i", "em", "u"}:
+            style = {"h1": "Heading 1", "h2": "Heading 2", "h3": "Heading 3", "li": "List Bullet"}.get(tag)
+            paragraph = doc.add_paragraph(style=style)
+            inline(node, paragraph)
+            return
+        if tag == "br":
+            doc.add_paragraph()
+            return
+        for child in node["children"]:
+            if isinstance(child, dict) and child["tag"] in {"b", "strong", "i", "em", "u"}:
+                paragraph = doc.add_paragraph()
+                inline(child, paragraph)
+            else:
+                add_blocks(child)
+
+    for child in parser.root["children"]:
+        add_blocks(child)
     out = io.BytesIO()
     doc.save(out)
     return out.getvalue()
