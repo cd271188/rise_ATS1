@@ -4,7 +4,7 @@ import { h, clear, card, pageHeader, table, field, modal, button, applyErrors, t
 import { go } from "../router.js";
 
 export const STATUS = { draft: "Draft", in_review: "In review", changes_requested: "Changes requested", active: "Accepted", superseded: "Replaced" };
-const MAX_TEMPLATE_BYTES = 2 * 1024 * 1024;
+const MAX_TEMPLATE_BYTES = 10 * 1024 * 1024;
 const EVENT = { created: "Started", saved: "Compensation saved", template: "Template saved", sent: "Sent for review", accepted: "Accepted", feedback: "Feedback", note: "Note" };
 const KIND = { earning: "Earning", employer: "Employer cost", deduction: "Deduction" };
 const GROUPS = [
@@ -60,7 +60,7 @@ export function uploadSampleButton(path, onDone, label = "Upload offer letter sa
   input.addEventListener("change", async () => {
     const file = input.files[0];
     if (!file) { input.value = ""; status.textContent = "No file selected."; return; }
-    if (file.size > MAX_TEMPLATE_BYTES) { input.value = ""; status.textContent = "Upload failed: sample must be smaller than 2 MB."; toast(status.textContent, "error"); return; }
+    if (file.size > MAX_TEMPLATE_BYTES) { input.value = ""; status.textContent = "Upload failed: sample must be smaller than 10 MB."; toast(status.textContent, "error"); return; }
     status.textContent = `Selected ${file.name}. Preparing upload…`;
     upload.disabled = true;
     upload.textContent = "Uploading…";
@@ -82,7 +82,7 @@ export function uploadSampleButton(path, onDone, label = "Upload offer letter sa
     }
     if (!updated) return;
     status.textContent = `Uploaded ${file.name}.`;
-    toast(label === "Upload revised template" ? "Revised template saved." : "Offer letter sample saved for review.", "success");
+    toast(label.startsWith("Upload revised") ? "Revised offer letter sample saved." : "Offer letter sample saved for review.", "success");
     try { await onDone(updated); }
     catch (e) {
       status.textContent = "Uploaded, but the page could not refresh: " + errorMessage(e);
@@ -93,16 +93,17 @@ export function uploadSampleButton(path, onDone, label = "Upload offer letter sa
 }
 
 export function templateEditorButton(path, current, onDone) {
-  return button(current?.has_template ? "Edit letter template" : "Create letter template", () => {
+  return button(current?.has_template ? "Edit offer letter draft" : "Create offer letter draft", () => {
     const name = h("input", { type: "text", maxlength: 120, value: current?.template_name?.replace(/\.(pdf|docx)$/i, "") || "offer-letter", placeholder: "Offer letter name" });
-    const content = h("textarea", { rows: 18, maxlength: 30000, placeholder: "Write the offer letter. Use {{candidate_name}}, {{candidate_id}}, {{company_name}}, {{offer_date}}, {{ctc_annual}}, and compensation keys such as {{basic_annual}}.", value: current?.template_text || "" });
+    const content = h("textarea", { rows: 18, maxlength: 30000, placeholder: "Write the offer letter. Likely candidate details are suggested as placeholders; review them, then add {{ctc_annual}} and compensation keys such as {{basic_annual}}.", value: current?.template_text || "" });
     const save = h("button", { class: "btn primary", type: "button" }, "Save template");
     const body = h("div", { class: "stack" },
-      current?.template_kind === "pdf" && !current.template_text ? h("p", { class: "notice warn" }, "This older PDF template cannot be loaded into the editor. Enter its content here to replace it with an editable template.") : null,
+      current?.template_kind === "pdf" ? h("p", { class: "notice warn" }, "Text was extracted from this PDF sample. Saving it converts the letter to an editable Word template; PDF layout and styling may change. Scanned PDFs without selectable text cannot be converted.") : null,
+      current?.template_text ? h("p", { class: "notice" }, "Likely candidate fields are shown as placeholders. Review each suggestion before saving.") : null,
       field("Template name", name), field("Offer letter content", content),
       h("p", { class: "muted" }, "Use {{field_name}} for values filled automatically or requested when an offer is generated. Use one paragraph per line."),
       h("div", { class: "actions" }, button("Cancel", () => m.close()), save));
-    const m = modal("Offer letter template editor", body, { wide: true });
+    const m = modal("Offer letter draft editor", body, { wide: true });
     save.addEventListener("click", async () => {
       save.disabled = true;
       try {
@@ -171,7 +172,7 @@ export async function offerPage(root) {
     if (!cur) {
       return [card("Offer letter",
         h("p", null, "Upload a sample offer letter or create a template in the editor. Replace sample-specific candidate details with placeholders such as {{candidate_name}}, {{designation}}, and {{ctc_annual}}. Rise Consulting will set up compensation fields and send the draft back for your review and approval."),
-        owner ? h("div", { class: "card-actions" }, uploadSampleButton("/offer-structure/template", draw), templateEditorButton("/offer-structure/template/text", cur, draw)) : h("p", { class: "muted" }, "The company owner has not provided an offer letter sample yet."))];
+      owner ? h("div", { class: "card-actions" }, uploadSampleButton("/offer-structure/template", draw), templateEditorButton("/offer-structure/template/text", cur, draw)) : h("p", { class: "muted" }, "The company owner has not provided an offer letter sample yet."))];
     }
     const out = [card(`Offer letter set-up · version ${cur.version}`,
       h("div", null, statusBadge(cur.status)),
