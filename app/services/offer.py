@@ -56,6 +56,16 @@ def _bad(i: int, message: str):
     raise ValidationError({"components": f"component {i}: {message}"})
 
 
+def _component_label(value) -> str:
+    """Clean labels from current submissions and older records saved as lists of words."""
+    if isinstance(value, (list, tuple)):
+        value = " ".join(str(part) for part in value)
+    text = offer_docs._clean(value)
+    # Older versions accidentally persisted split labels and then nested their repr on each save.
+    text = re.sub(r"[\[\]\\\"']", " ", text)
+    return " ".join(text.split()[:60])
+
+
 def clean_components(raw) -> list[dict]:
     if not isinstance(raw, list) or len(raw) > MAX_COMPONENTS:
         raise ValidationError({"components": f"give a list of at most {MAX_COMPONENTS} components"})
@@ -64,7 +74,7 @@ def clean_components(raw) -> list[dict]:
         if not isinstance(c, dict):
             _bad(i, "invalid")
         key = str(c.get("key") or "").strip().lower()
-        label = "".join(offer_docs._clean(c.get("label"))).split()[:60]
+        label = _component_label(c.get("label"))
         kind, calc = str(c.get("kind") or "earning"), str(c.get("calc") or "")
         if not KEY.fullmatch(key) or key.endswith(("_annual", "_monthly")):
             _bad(i, "the key must be lower-case letters, digits and underscores, starting with a letter, and not end in _annual or _monthly")
@@ -141,7 +151,7 @@ def compute(components: list[dict], ctc: int) -> dict:
     for c in components:
         a = annual[c["key"]]
         m = _round(Decimal(a) / 12)
-        rows.append({"key": c["key"], "label": c["label"], "kind": c["kind"], "annual": a, "monthly": m,
+        rows.append({"key": c["key"], "label": _component_label(c.get("label")), "kind": c["kind"], "annual": a, "monthly": m,
                      "annual_text": inr(a), "monthly_text": inr(m)})
     gross = sum(r["annual"] for r in rows if r["kind"] == "earning")
     return {"ctc": ctc, "ctc_text": inr(ctc), "rows": rows, "gross": gross, "gross_text": inr(gross),
@@ -208,7 +218,7 @@ def _active(db, org_id: int) -> OfferStructure | None:
 
 
 def _view(s: OfferStructure, ctc: int | None = None) -> dict:
-    comps = s.components or []
+    comps = [{**c, "label": _component_label(c.get("label"))} for c in (s.components or [])]
     preview, preview_error = None, None
     if comps:
         try:
