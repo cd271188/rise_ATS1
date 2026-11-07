@@ -121,15 +121,15 @@ export async function compensationPage(root) {
       cur && editable ? h("div", { class: "card-actions" }, button("Open draft", () => document.getElementById("offer-draft-editor")?.scrollIntoView({ behavior: "smooth", block: "start" }))) : null,
       manage && status === "active" ? h("div", { class: "card-actions" }, button("Start a new draft", () => run(() => api.post(base + "/new-version"), "New draft started."), "primary")) : null));
 
-    out.push(card("Offer letter template",
-      h("p", { class: "muted" }, "Upload your sample or create the template in the editor. Replace sample-specific details with placeholders such as {{candidate_name}}, {{designation}}, {{offer_date}} and compensation fields such as {{basic_annual}}."),
+    out.push(card("Offer letter sample",
+      h("p", { class: "muted" }, "Upload a sample offer letter or create one in the editor. We suggest placeholders for recognizable candidate fields; review those suggestions and add compensation fields such as {{ctc_annual}} and {{basic_annual}}."),
       cur?.has_template ? h("div", null, h("strong", null, cur.template_name), " ", h("small", { class: "muted" }, cur.template_kind === "docx" ? "Word template" : "PDF template")) : h("p", { class: "muted" }, "No template created yet."),
         h("div", { class: "card-actions" },
-          editable ? uploadSampleButton(base + "/template", async (s) => { st = s; draft = toDraft(s.current?.components || []); draw(); }, cur?.has_template ? "Upload revised template" : "Upload offer letter sample", setTemplateUploading) : null,
+          editable ? uploadSampleButton(base + "/template", async (s) => { st = s; draft = toDraft(s.current?.components || []); draw(); }, cur?.has_template ? "Upload revised offer letter sample" : "Upload offer letter sample", setTemplateUploading) : null,
           editable ? templateEditorButton(base + "/template/text", cur, async (s) => { st = s; draft = toDraft(s.current?.components || []); draw(); }) : null),
       cur?.has_template ? placeholderSummary(cur.placeholders) : null));
 
-    if (cur?.has_template) out.push(card("Review template",
+    if (cur?.has_template) out.push(card("Review offer letter draft",
       h("p", { class: "muted" }, "Preview the offer letter with placeholder labels. Edit the draft above if the wording or fields need changes."),
       previewTemplate()));
     
