@@ -250,7 +250,9 @@ def _editable(ctx: Ctx, org: Organization, rise: bool) -> OfferStructure:
     working = _working(ctx.db, org.id)
     if working:
         if working.status == "in_review":
-            raise Conflict("this version is with the company owner for review, so it cannot be changed now")
+            if rise:
+                raise Conflict("the company owner is reviewing this version")
+            working.status, working.sent_at = "draft", None
         return working
     if _active(ctx.db, org.id):
         raise Conflict("the accepted structure is locked; " + ("start a new version to change it" if rise
@@ -404,6 +406,36 @@ def owner_get(ctx: Ctx, ctc=None) -> dict:
     return _state(ctx.db, _own_org(ctx, False), _parse_ctc_arg(ctc))
 
 
+def owner_save(ctx: Ctx, data: dict) -> dict:
+    org = _own_org(ctx, True)
+    comps = clean_components(data.get("components"))
+    s = _editable(ctx, org, False)
+    s.components = comps
+    _event(s, ctx, "saved", f"{len(comps)} compensation components")
+    audit.record(ctx, "offer.structure_save", "offer_structure", s.id, {"version": s.version, "components": len(comps)})
+    ctx.db.commit()
+    return _state(ctx.db, org)
+
+
+def owner_new_version(ctx: Ctx) -> dict:
+    org = _own_org(ctx, True)
+    if _working(ctx.db, org.id):
+        raise Conflict("a draft is already in progress")
+    active = _active(ctx.db, org.id)
+    if not active:
+        raise Conflict("there is no approved offer setup to copy")
+    top = ctx.db.scalar(select(func.max(OfferStructure.version)).where(OfferStructure.org_id == org.id)) or 0
+    s = OfferStructure(org_id=org.id, version=top + 1, status="draft", components=list(active.components or []),
+                       template_name=active.template_name, template_kind=active.template_kind,
+                       template_file=active.template_file, events=[], created_by=ctx.user.id)
+    ctx.db.add(s)
+    ctx.db.flush()
+    _event(s, ctx, "created", f"copied from version {active.version}")
+    audit.record(ctx, "offer.new_version", "offer_structure", s.id, {"version": s.version})
+    ctx.db.commit()
+    return _state(ctx.db, org)
+
+
 def owner_template(ctx: Ctx, blob: bytes, filename: str) -> dict:
     org = _own_org(ctx, True)
     s = _editable(ctx, org, False)
@@ -426,11 +458,24 @@ def owner_template_file(ctx: Ctx) -> tuple[bytes, str, str]:
     return _template_of(ctx, _own_org(ctx, False))
 
 
+def owner_template_preview(ctx: Ctx) -> bytes:
+    org = _own_org(ctx, False)
+    blob, _name, kind = _template_of(ctx, org)
+    try:
+        tokens = offer_docs.placeholders(kind, blob)["names"]
+        values = {name: f"[{_label(name)}]" for name in tokens}
+        pdf, _engine = offer_docs.render(kind, blob, values)
+        return pdf
+    except ValueError as e:
+        raise ValidationError({"template": str(e)})
+
+
 def owner_accept(ctx: Ctx) -> dict:
     org = _own_org(ctx, True)
     s = _working(ctx.db, org.id)
-    if not s or s.status != "in_review":
-        raise Conflict("there is nothing waiting for your review")
+    if not s or s.status not in ("draft", "changes_requested", "in_review"):
+        raise Conflict("there is no draft to approve")
+    _validate_setup(s)
     previous = _active(ctx.db, org.id)
     if previous:
         previous.status = "superseded"
@@ -439,6 +484,33 @@ def owner_accept(ctx: Ctx) -> dict:
     audit.record(ctx, "offer.accept", "offer_structure", s.id, {"version": s.version})
     ctx.db.commit()
     return _state(ctx.db, org)
+
+
+def _validate_setup(s: OfferStructure) -> None:
+    problems = []
+    if not s.template_file:
+        problems.append("create or upload an offer letter template first")
+    else:
+        info = _analysis(s)
+        if info["error"]:
+            problems.append(info["error"])
+        if info["malformed"]:
+            problems.append("fix the broken {{ }} in: " + "; ".join(info["malformed"]))
+        if info["unknown"]:
+            problems.append("add compensation components for: " + ", ".join(info["unknown"]))
+        if "candidate_name" not in info["automatic"]:
+            problems.append("include {{candidate_name}} in the template")
+        if not info["compensation"]:
+            problems.append("include a compensation placeholder such as {{ctc_annual}} in the template")
+    if not s.components:
+        problems.append("add at least one compensation component")
+    else:
+        try:
+            compute(s.components, _sample_ctc(s.components))
+        except ValidationError as e:
+            problems.append(next(iter(e.errors.values())))
+    if problems:
+        raise ValidationError({"structure": "; ".join(problems)})
 
 
 def owner_feedback(ctx: Ctx, data: dict) -> dict:
