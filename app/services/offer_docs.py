@@ -58,8 +58,23 @@ def build_text_template(content: str) -> bytes:
     if len(content) > 30000:
         raise ValueError("keep the offer letter under 30,000 characters")
     doc = docx.Document()
-    for line in content.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
-        doc.add_paragraph(line)
+    lines = content.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    i = 0
+    while i < len(lines):
+        if "|" not in lines[i]:
+            doc.add_paragraph(lines[i])
+            i += 1
+            continue
+        rows = []
+        while i < len(lines) and "|" in lines[i]:
+            rows.append([cell.strip() for cell in lines[i].split("|")])
+            i += 1
+        count = max(len(row) for row in rows)
+        table = doc.add_table(rows=len(rows), cols=count)
+        table.style = "Table Grid"
+        for ri, row in enumerate(rows):
+            for ci in range(count):
+                table.cell(ri, ci).text = row[ci] if ci < len(row) else ""
     out = io.BytesIO()
     doc.save(out)
     return out.getvalue()
@@ -68,7 +83,18 @@ def build_text_template(content: str) -> bytes:
 def template_text(kind: str, blob: bytes) -> str:
     if kind != "docx":
         return ""
-    return "\n".join(p.text for p in _docx_paragraphs(_open_docx(blob)))
+    from docx.oxml.ns import qn
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+    doc = _open_docx(blob)
+    lines = []
+    for child in doc.element.body.iterchildren():
+        if child.tag == qn("w:p"):
+            lines.append(Paragraph(child, doc).text)
+        elif child.tag == qn("w:tbl"):
+            table = Table(child, doc)
+            lines.extend(" | ".join(cell.text.replace("\n", " / ").strip() for cell in row.cells) for row in table.rows)
+    return "\n".join(lines)
 
 
 def _open_docx(blob: bytes):
