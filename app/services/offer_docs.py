@@ -144,7 +144,11 @@ def _build_rich_text_template(content: str, docx_module) -> bytes:
         if tag == "br":
             paragraph.add_run().add_break()
             return
-        inline(node, paragraph, bold or tag in {"b", "strong"}, italic or tag in {"i", "em"}, underline or tag == "u")
+        next_bold = bold or tag in {"b", "strong"}
+        next_italic = italic or tag in {"i", "em"}
+        next_underline = underline or tag == "u"
+        for child in node["children"]:
+            inline(child, paragraph, next_bold, next_italic, next_underline)
 
     def descendants(node, tag):
         found = []
