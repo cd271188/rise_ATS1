@@ -77,7 +77,7 @@ export async function compensationPage(root) {
       clear(body);
       draft.forEach((c, i) => {
         const key = h("input", { type: "text", value: c.key, maxlength: 30, "aria-label": "Key", disabled: !editable });
-        const label = h("input", { type: "text", value: c.label, maxlength: 60, "aria-label": "Name", disabled: !editable });
+        const label = h("input", { type: "text", value: c.label, maxlength: 60, "aria-label": "Particulars", disabled: !editable });
         const kind = options(KINDS, c.kind);
         const calc = options(CALCS, c.calc);
         const value = h("input", { type: "number", step: "any", min: "0", value: c.value, "aria-label": "Value", disabled: !editable || c.calc === "balance" });
@@ -97,7 +97,7 @@ export async function compensationPage(root) {
     };
     paint();
     return h("div", { class: "stack" },
-      h("div", { class: "table-wrap" }, h("table", { class: "data" }, h("thead", null, h("tr", null, ["Name", "key (used in the letter)", "Type", "How it is worked out", "Value", ""].map((x) => h("th", null, x)))), body)),
+      h("div", { class: "table-wrap" }, h("table", { class: "data" }, h("thead", null, h("tr", null, ["Particulars", "key (used in the letter)", "Type", "How it is worked out", "Value", ""].map((x) => h("th", null, x)))), body)),
       editable ? h("div", { class: "card-actions" },
         button("Add component", () => { draft.push(blank()); paint(); }),
         draft.length ? null : button("Start from a typical structure", () => { draft = TYPICAL.map((c) => ({ ...c, auto: false })); paint(); })) : null,
@@ -126,11 +126,6 @@ export async function compensationPage(root) {
     const compensationCard = card("Compensation components", editor(editable));
     compensationCard.id = "offer-draft-editor";
     out.push(compensationCard);
-    if (editable) {
-      saveDraftButton = button("Save draft", () => run(save, "Draft saved."), "primary");
-      saveDraftButton.disabled = templateUploading;
-      out.push(h("div", { class: "card-actions" }, saveDraftButton));
-    } else saveDraftButton = null;
     
     out.push(card("Offer letter sample",
       h("p", { class: "muted" }, "Upload a sample offer letter or create one in the editor. We suggest placeholders for recognizable candidate fields; review those suggestions and add compensation fields such as {{ctc_annual}} and {{basic_annual}}."),
@@ -153,6 +148,12 @@ export async function compensationPage(root) {
         cur.preview ? breakup(cur.preview) : h("p", { class: "notice warn" }, cur.preview_error || "")));
     }
 
+    if (editable) {
+      saveDraftButton = button("Save draft", () => run(save, "Draft saved."), "primary");
+      saveDraftButton.disabled = templateUploading;
+      out.push(h("div", { class: "card-actions" }, saveDraftButton));
+    } else saveDraftButton = null;
+    
     if (editable && cur) {
       out.push(card("Review and approve",
         h("p", { class: "muted" }, "Review the template preview and compensation breakup above. Approving activates this version for offer generation and downloads."),
