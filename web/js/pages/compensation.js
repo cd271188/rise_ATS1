@@ -1,7 +1,7 @@
 // Client owner: create, review, and approve the offer letter template and compensation setup.
 import { api, qs } from "../api.js";
 import { h, clear, card, pageHeader, field, button, toast, errorMessage, confirmBox, can, modal } from "../ui.js";
-import { breakup, placeholderSummary, eventsList, templateEditorButton, uploadSampleButton, statusBadge } from "./offer.js";
+import { breakup, placeholderSummary, templateEditorButton, uploadSampleButton, statusBadge } from "./offer.js";
 
 const KINDS = [["earning", "Earning (paid to the employee)"], ["employer", "Employer cost (part of CTC)"], ["deduction", "Deduction (outside CTC)"]];
 const CALCS = [["pct_ctc", "% of CTC"], ["pct_basic", "% of Basic"], ["fixed", "Fixed amount"], ["balance", "Balance of the CTC"]];
@@ -111,6 +111,8 @@ export async function compensationPage(root) {
     const editable = manage && (!cur || ["draft", "changes_requested", "in_review"].includes(status));
     const feedback = status === "changes_requested" ? cur.events.slice().reverse().find((e) => e.kind === "feedback") : null;
     const out = [];
+    const editLetterButton = editable ? templateEditorButton(base + "/template/text", cur, async (s) => { st = s; draft = toDraft(s.current?.components || []); draw(); }) : null;
+    if (editLetterButton) editLetterButton.id = "offer-letter-editor-button";
 
     if (feedback) out.push(h("div", { class: "notice warn" }, h("strong", null, "This draft needs changes"), h("small", { class: "muted" }, ` (${feedback.at}${feedback.by ? " · " + feedback.by : ""})`), h("p", null, feedback.note)));
     if (cur && status === "active") out.push(h("div", { class: "notice" }, `Version ${cur.version} is approved and active. Start a new draft to make changes.`));
@@ -118,7 +120,7 @@ export async function compensationPage(root) {
     out.push(card(cur ? `Version ${cur.version}` : "Not started",
       h("div", null, cur ? statusBadge(cur.status) : h("span", { class: "muted" }, "Nothing has been set up for this company yet.")),
       st.active_version && status !== "active" ? h("small", { class: "muted" }, ` Version ${st.active_version} stays in use until this one is accepted.`) : null,
-      cur && editable ? h("div", { class: "card-actions" }, button("Open draft", () => document.getElementById("offer-draft-editor")?.scrollIntoView({ behavior: "smooth", block: "start" }))) : null,
+      cur && editable ? h("div", { class: "card-actions" }, button("Open draft", () => document.getElementById("offer-letter-editor-button")?.click())) : null,
       manage && status === "active" ? h("div", { class: "card-actions" }, button("Start a new draft", () => run(() => api.post(base + "/new-version"), "New draft started."), "primary")) : null));
 
     out.push(card("Offer letter sample",
@@ -126,7 +128,7 @@ export async function compensationPage(root) {
       cur?.has_template ? h("div", null, h("strong", null, cur.template_name), " ", h("small", { class: "muted" }, cur.template_kind === "docx" ? "Word template" : "PDF template")) : h("p", { class: "muted" }, "No template created yet."),
         h("div", { class: "card-actions" },
           editable ? uploadSampleButton(base + "/template", async (s) => { st = s; draft = toDraft(s.current?.components || []); draw(); }, cur?.has_template ? "Upload revised offer letter sample" : "Upload offer letter sample", setTemplateUploading) : null,
-          editable ? templateEditorButton(base + "/template/text", cur, async (s) => { st = s; draft = toDraft(s.current?.components || []); draw(); }) : null),
+          editLetterButton),
       cur?.has_template ? placeholderSummary(cur.placeholders) : null));
 
     if (cur?.has_template) out.push(card("Review offer letter draft",
@@ -155,6 +157,9 @@ export async function compensationPage(root) {
         h("p", { class: "muted" }, "Review the template preview and compensation breakup above. Approving activates this version for offer generation and downloads."),
         !cur.has_template ? h("p", { class: "notice warn" }, "Upload or create an offer letter template before approval.") : null,
         !cur.components.length ? h("p", { class: "notice warn" }, "Add at least one compensation component before approval.") : null,
+        !cur.has_template ? h("div", { class: "card-actions" }, button("Edit offer letter draft", () => document.getElementById("offer-letter-editor-button")?.click())) : null,
+        !cur.components.length ? h("div", { class: "card-actions" }, button("Add compensation components", () => document.getElementById("offer-draft-editor")?.scrollIntoView({ behavior: "smooth", block: "start" }))) : null,
+        h("p", { class: "muted" }, "To approve: save the offer letter draft, add and save at least one compensation component, then return here and approve the setup."),
         approvalError ? h("p", { class: "notice warn" }, approvalError) : null,
         h("div", { class: "card-actions" }, approveButton = button("Approve offer letter setup", async () => {
           if (!(await confirmBox("Approve offer letter setup", "This template and compensation structure will become active. Offer letters can then be generated for eligible candidates.", "Approve"))) return;
@@ -170,7 +175,6 @@ export async function compensationPage(root) {
     approveButton.disabled = templateUploading || !cur.has_template || !cur.components.length;
     } else approveButton = null;
 
-    if (cur) out.push(card("History", eventsList(cur.events)));
     return out;
   }
 
