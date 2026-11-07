@@ -55,18 +55,29 @@ export function eventsList(events) {
 
 export function uploadSampleButton(path, onDone, label = "Upload offer letter sample") {
   const input = h("input", { type: "file", accept: ".docx,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document", hidden: true });
+  const upload = button(label, () => input.click());
   input.addEventListener("change", async () => {
     const file = input.files[0];
-    input.value = "";
-    if (!file) return;
-    if (file.size > MAX_TEMPLATE) { toast("The sample must be smaller than 2 MB.", "error"); return; }
+    if (!file) { input.value = ""; return; }
+    if (file.size > MAX_TEMPLATE) { input.value = ""; toast("The sample must be smaller than 2 MB.", "error"); return; }
+    upload.disabled = true;
+    upload.textContent = "Uploading…";
+    let updated;
     try {
-      const updated = await api.putFile(path + "?filename=" + encodeURIComponent(file.name), await file.arrayBuffer());
-      toast(label === "Upload revised template" ? "Revised template saved." : "Offer letter sample saved for review.", "success");
-      await onDone(updated);
+      const bytes = await file.arrayBuffer();
+      updated = await api.putFile(path + "?filename=" + encodeURIComponent(file.name), bytes);
     } catch (e) { toast(e.errors?.template || errorMessage(e), "error"); }
+    finally {
+      input.value = "";
+      upload.disabled = false;
+      upload.textContent = label;
+    }
+    if (!updated) return;
+    toast(label === "Upload revised template" ? "Revised template saved." : "Offer letter sample saved for review.", "success");
+    try { await onDone(updated); }
+    catch (e) { toast("The template was uploaded, but the page could not refresh: " + errorMessage(e), "warn", 8000); }
   });
-  return h("span", null, button(label, () => input.click()), input);
+  return h("span", null, upload, input);
 }
 
 export function templateEditorButton(path, current, onDone) {
