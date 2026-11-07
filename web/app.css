@@ -236,6 +236,14 @@ table.grid { border-collapse: separate; border-spacing: 0; table-layout: fixed; 
 .grid .grid-inline-select { width: 100%; height: 30px; padding: 3px 6px; font-size: inherit; border: 1px solid transparent; background: transparent; }
 .grid .grid-inline-select:focus { border-color: var(--brand); outline: 2px solid var(--brand); outline-offset: -2px; }
 .offer-template-frame { display: block; width: 100%; height: 72vh; border: 0; background: #fff; }
+.offer-editor-toolbar { display: flex; flex-wrap: wrap; gap: 6px; }
+.offer-rich-editor { min-height: 360px; max-height: 62vh; overflow: auto; padding: 12px; border: 1px solid var(--line-strong); border-radius: 6px; background: #fff; }
+.offer-rich-editor:focus { outline: 2px solid var(--brand); outline-offset: 1px; }
+.offer-rich-editor p { margin: 0 0 8px; min-height: 1.4em; }
+.offer-rich-editor h2 { margin: 12px 0 8px; }
+.offer-rich-editor table { width: 100%; border-collapse: collapse; margin: 8px 0 14px; }
+.offer-rich-editor th, .offer-rich-editor td { border: 1px solid var(--line-strong); padding: 6px 8px; min-width: 80px; text-align: left; }
+.offer-rich-editor th { background: var(--bg); }
 .upload-sample-control { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .grid td .badge { font-size: 11px; padding: 1px 8px; }
 .grid td.empty { text-align: center; padding: 30px; }
