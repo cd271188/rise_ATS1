@@ -14,7 +14,6 @@ PERMISSIONS = {
     "create_companies": "Create client companies",
     "manage_companies": "Rename, suspend and reactivate companies",
     "manage_client_users": "Add client users, change roles, disable, reset passwords",
-    "manage_compensation": "Build offer letter compensation structures and send them to companies",
     "manage_ai": "Turn AI features on or off for companies",
     "create_job_requirements": "Create client job requirements",
     "view_audit": "See the Rise activity log (who did what to which company)",
@@ -37,7 +36,7 @@ def _need_platform(ctx: Ctx):
 def _need(ctx: Ctx, perm: str):
     _need_platform(ctx)
     if perm not in permissions_of(ctx.user):
-        raise Forbidden("you have not been given this permission: " + PERMISSIONS[perm].lower())
+        raise Forbidden("you have not been given this permission: " + PERMISSIONS.get(perm, perm.replace("_", " ")).lower())
 
 
 def _need_creator(ctx: Ctx):
