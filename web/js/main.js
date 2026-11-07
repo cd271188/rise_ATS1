@@ -11,7 +11,6 @@ import { settingsPage, accountPage } from "./pages/settings.js";
 import { teamPage, auditPage } from "./pages/team.js";
 import { companiesPage, staffPage, activityPage } from "./pages/platform.js";
 import { vendorsPage } from "./pages/vendors.js";
-import { offerPage } from "./pages/offer.js";
 import { compensationPage } from "./pages/compensation.js";
 import { jobsPage, jobPage } from "./pages/jobs.js";
 
@@ -22,7 +21,6 @@ const ROUTES = [
   { path: "/platform/jobs", title: "Client Requirements", nav: "Client Requirements", icon: "📋", platform: true, platformJobs: true, render: jobsPage },
   { path: "/rise-team", title: "Rise team", nav: "Rise team", icon: "🛡️", platform: true, creator: true, render: staffPage },
   { path: "/rise-activity", title: "Rise activity", nav: "Rise activity", icon: "", platform: true, perm: "view_audit", render: activityPage },
-  { path: "/company/:id/compensation", title: "Offer letter set-up", platform: true, render: compensationPage },
   { path: "/dashboard", title: "Dashboard", nav: "Dashboard", icon: "📊", render: dashboardPage },
   { path: "/candidate/new", title: "Add candidate", nav: "Add Candidate", icon: "➕", write: true, render: candidateFormPage },
   { path: "/candidate/:ref", title: "Candidate", render: candidateFormPage },
@@ -33,7 +31,7 @@ const ROUTES = [
   { path: "/reports", title: "Reports", nav: "Reports", icon: "目", render: reportsPage },
   { path: "/settings", title: "Settings", nav: "Settings", icon: "⚙️", admin: true, render: settingsPage },
   { path: "/vendors", title: "Vendors", nav: "Vendors", icon: "🏭", admin: true, client: true, render: vendorsPage },
-  { path: "/offer", title: "Offer letter", nav: "Offer letter", icon: "📄", admin: true, client: true, render: offerPage },
+  { path: "/offer", title: "Offer letter", nav: "Offer letter", icon: "📄", admin: true, client: true, render: compensationPage },
   { path: "/team", title: "Team", nav: "Team", icon: "👥", admin: true, render: teamPage },
   { path: "/audit", title: "Audit log", nav: "Audit", icon: "✎", admin: true, render: auditPage },
   { path: "/account", title: "My account", render: accountPage },
