@@ -57,10 +57,22 @@ function escapeEditorText(value) {
   return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\"/g, "&quot;");
 }
 
-function editorHtml(text) {
+function editorHtml(text, components = []) {
   const lines = String(text || "").split(/\r?\n/);
   const blocks = [];
+  const annexureHeading = (line) => /ANNEXURE\s+A/i.test(line) && /ANNUAL\s+COMPENSATION\s+STRUCTURE/i.test(line);
+  let annexureInserted = false;
   for (let i = 0; i < lines.length;) {
+    if (components.length && annexureHeading(lines[i])) {
+      blocks.push(compensationAnnexure(components));
+      annexureInserted = true;
+      i += 1;
+      while (i < lines.length && !lines[i].trim()) i += 1;
+      if (i < lines.length && lines[i].includes("|")) {
+        while (i < lines.length && (lines[i].includes("|") || !lines[i].trim())) i += 1;
+      }
+      continue;
+    }
     if (lines[i].includes("|")) {
       const rows = [];
       while (i < lines.length && lines[i].includes("|")) {
@@ -72,6 +84,7 @@ function editorHtml(text) {
       i += 1;
     }
   }
+  if (components.length && !annexureInserted) blocks.push(compensationAnnexure(components));
   return blocks.join("") || "<p><br></p>";
 }
 
@@ -123,10 +136,13 @@ export function uploadSampleButton(path, onDone, label = "Upload offer letter sa
 }
 
 export function templateEditorButton(path, current, onDone) {
-  return button(current?.has_template ? "Edit offer letter draft" : "Create offer letter draft", () => {
-    const name = h("input", { type: "text", maxlength: 120, value: current?.template_name?.replace(/\.(pdf|docx)$/i, "") || "offer-letter", placeholder: "Offer letter name" });
+  const initial = typeof current === "function" ? current() : current;
+  return button(initial?.has_template ? "Edit offer letter draft" : "Create offer letter draft", () => {
+    const state = typeof current === "function" ? current() : current;
+    const name = h("input", { type: "text", maxlength: 120, value: state?.template_name?.replace(/\.(pdf|docx)$/i, "") || "offer-letter", placeholder: "Offer letter name" });
     const content = h("div", { class: "offer-rich-editor", contenteditable: "true", role: "textbox", "aria-label": "Offer letter content", "aria-multiline": "true" });
-    content.innerHTML = editorHtml(current?.template_text || "");
+    const editableComponents = (state?.components || []).filter((c) => c.key?.trim() && c.label?.trim());
+    content.innerHTML = editorHtml(state?.template_text || "", editableComponents);
     const tool = (label, title, action) => {
       const b = button(label, () => { content.focus(); action(); });
       b.title = title;
@@ -170,14 +186,13 @@ export function templateEditorButton(path, current, onDone) {
       tool("• List", "Bulleted list", () => document.execCommand("insertUnorderedList")),
       tool("Insert table", "Insert a table", () => document.execCommand("insertHTML", false, "<table><tbody><tr><th>Col 1</th><th>Col 2</th><th>Col 3</th></tr><tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr></tbody></table><p><br></p>")),
       tool("Add row", "Add a row to the current table", () => addTablePart("row")),
-      tool("Add column", "Add a column to the current table", () => addTablePart("column")),
-      current?.components?.length ? tool("Insert compensation Annexure A", "Insert a compensation table using this version's components", () => document.execCommand("insertHTML", false, compensationAnnexure(current.components))) : null);
+      tool("Add column", "Add a column to the current table", () => addTablePart("column")));
     const save = h("button", { class: "btn primary", type: "button" }, "Save offer letter");
     const body = h("div", { class: "stack" },
-      current?.template_kind === "pdf" ? h("p", { class: "notice warn" }, "Text was extracted from this PDF sample. Saving it converts the letter to an editable Word template; PDF layout and styling may change. Scanned PDFs without selectable text cannot be converted.") : null,
-      current?.template_text ? h("p", { class: "notice" }, "Likely candidate fields are shown as placeholders. Review each suggestion before saving.") : null,
+      state?.template_kind === "pdf" ? h("p", { class: "notice warn" }, "Text was extracted from this PDF sample. Saving it converts the letter to an editable Word template; PDF layout and styling may change. Scanned PDFs without selectable text cannot be converted.") : null,
+      state?.template_text ? h("p", { class: "notice" }, "Likely candidate fields are shown as placeholders. Review each suggestion before saving.") : null,
       field("Offer letter name", name), h("label", { class: "field-label" }, "Offer letter content"), toolbar, content,
-      h("p", { class: "muted" }, "Use {{field_name}} for values filled automatically or requested when an offer is generated. Use the compensation Annexure button to add the component table."),
+      h("p", { class: "muted" }, "Use {{field_name}} for values filled automatically or requested when an offer is generated. Annexure A is populated from the compensation particulars above; review it before saving."),
       h("div", { class: "actions" }, button("Cancel", () => m.close()), save));
     const m = modal("Offer letter draft editor", body, { wide: true });
     save.addEventListener("click", async () => {
