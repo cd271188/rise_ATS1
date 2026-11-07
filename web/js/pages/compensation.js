@@ -111,7 +111,7 @@ export async function compensationPage(root) {
       h("p", { class: "muted" }, "Upload your sample or create the template in the editor. Replace sample-specific details with placeholders such as {{candidate_name}}, {{designation}}, {{offer_date}} and compensation fields such as {{basic_annual}}."),
       cur?.has_template ? h("div", null, h("strong", null, cur.template_name), " ", h("small", { class: "muted" }, cur.template_kind === "docx" ? "Word template" : "PDF template")) : h("p", { class: "muted" }, "No template created yet."),
         h("div", { class: "card-actions" },
-          editable ? uploadSampleButton(base + "/template", async (s) => { st = s; draft = toDraft(s.current?.components || []); draw(); }, "Upload revised template") : null,
+          editable ? uploadSampleButton(base + "/template", async (s) => { st = s; draft = toDraft(s.current?.components || []); draw(); }, cur?.has_template ? "Upload revised template" : "Upload offer letter sample") : null,
           editable ? templateEditorButton(base + "/template/text", cur, async (s) => { st = s; draft = toDraft(s.current?.components || []); draw(); }) : null),
       cur?.has_template ? placeholderSummary(cur.placeholders) : null));
 
