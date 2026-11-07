@@ -52,6 +52,23 @@ export function eventsList(events) {
     e.note && e.kind !== "saved" ? h("p", null, e.note) : null)));
 }
 
+
+export function uploadSampleButton(path, onDone, label = "Upload offer letter sample") {
+  const input = h("input", { type: "file", accept: ".docx,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document", hidden: true });
+  input.addEventListener("change", async () => {
+    const file = input.files[0];
+    input.value = "";
+    if (!file) return;
+    if (file.size > MAX_TEMPLATE) { toast("The sample must be smaller than 2 MB.", "error"); return; }
+    try {
+      const updated = await api.putFile(path + "?filename=" + encodeURIComponent(file.name), await file.arrayBuffer());
+      toast(label === "Upload revised template" ? "Revised template saved." : "Offer letter sample saved for review.", "success");
+      await onDone(updated);
+    } catch (e) { toast(e.errors?.template || errorMessage(e), "error"); }
+  });
+  return h("span", null, button(label, () => input.click()), input);
+}
+
 export function templateEditorButton(path, current, onDone) {
   return button(current?.has_template ? "Edit letter template" : "Create letter template", () => {
     const name = h("input", { type: "text", maxlength: 120, value: current?.template_name?.replace(/\.(pdf|docx)$/i, "") || "offer-letter", placeholder: "Offer letter name" });
@@ -130,9 +147,8 @@ export async function offerPage(root) {
     const canUpload = owner && (!cur || ["draft", "changes_requested"].includes(cur.status));
     if (!cur) {
       return [card("Offer letter",
-        h("p", null, "Create your company's offer letter template here. Write each detail that changes from one letter to the next as a {{placeholder}}, for example {{candidate_name}}, {{joining_date}} or {{basic_annual}}."),
-        h("p", { class: "muted" }, "Rise Consulting will then set up the compensation structure behind the placeholders and send it to you to review."),
-        owner ? templateEditorButton("/offer-structure/template/text", cur, draw) : h("p", { class: "muted" }, "The company owner has not created an offer letter template yet."))];
+        h("p", null, "Upload a sample offer letter or create a template in the editor. Replace sample-specific candidate details with placeholders such as {{candidate_name}}, {{designation}}, and {{ctc_annual}}. Rise Consulting will set up compensation fields and send the draft back for your review and approval."),
+        owner ? h("div", { class: "card-actions" }, uploadSampleButton("/offer-structure/template", draw), templateEditorButton("/offer-structure/template/text", cur, draw)) : h("p", { class: "muted" }, "The company owner has not provided an offer letter sample yet."))];
     }
     const out = [card(`Offer letter set-up · version ${cur.version}`,
       h("div", null, statusBadge(cur.status)),
@@ -147,9 +163,11 @@ export async function offerPage(root) {
         owner && cur.status !== "in_review" ? button("Leave a note for Rise", () => feedbackDialog(true)) : null))];
 
     out.push(card("Letter template",
-      cur.has_template ? h("div", null, h("strong", null, cur.template_name), " ", h("small", { class: "muted" }, "Editable text template"),
-        canUpload ? h("div", { class: "card-actions" }, templateEditorButton("/offer-structure/template/text", cur, draw)) : null) :
-        h("div", null, h("p", { class: "muted" }, "No template yet."), canUpload ? templateEditorButton("/offer-structure/template/text", cur, draw) : null),
+      cur.has_template ? h("div", null, h("strong", null, cur.template_name), " ", h("small", { class: "muted" }, cur.template_kind === "docx" ? "Word template" : "PDF template"),
+        h("div", { class: "card-actions" }, button("Download draft for review", () => api.download("/offer-structure/template", withExt(cur.template_name, cur.template_kind)).catch((e) => toast(errorMessage(e), "error"))),
+          canUpload ? uploadSampleButton("/offer-structure/template", draw) : null,
+          canUpload ? templateEditorButton("/offer-structure/template/text", cur, draw) : null)) :
+        h("div", null, h("p", { class: "muted" }, "No template yet."), canUpload ? h("div", { class: "card-actions" }, uploadSampleButton("/offer-structure/template", draw), templateEditorButton("/offer-structure/template/text", cur, draw)) : null),
       cur.has_template ? placeholderSummary(cur.placeholders) : null));
 
     const sample = h("input", { type: "text", inputmode: "numeric", placeholder: "e.g. 1200000", value: ctc, "aria-label": "Annual CTC to try" });
