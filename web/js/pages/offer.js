@@ -4,6 +4,7 @@ import { h, clear, card, pageHeader, table, field, modal, button, applyErrors, t
 import { go } from "../router.js";
 
 export const STATUS = { draft: "Draft", in_review: "In review", changes_requested: "Changes requested", active: "Accepted", superseded: "Replaced" };
+const MAX_TEMPLATE_BYTES = 2 * 1024 * 1024;
 const EVENT = { created: "Started", saved: "Compensation saved", template: "Template saved", sent: "Sent for review", accepted: "Accepted", feedback: "Feedback", note: "Note" };
 const KIND = { earning: "Earning", employer: "Employer cost", deduction: "Deduction" };
 const GROUPS = [
@@ -52,7 +53,6 @@ export function eventsList(events) {
     e.note && e.kind !== "saved" ? h("p", null, e.note) : null)));
 }
 
-
 export function uploadSampleButton(path, onDone, label = "Upload offer letter sample", onBusy = () => {}) {
   const input = h("input", { type: "file", accept: ".docx,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document", hidden: true });
   const upload = button(label, () => input.click());
@@ -60,14 +60,15 @@ export function uploadSampleButton(path, onDone, label = "Upload offer letter sa
   input.addEventListener("change", async () => {
     const file = input.files[0];
     if (!file) { input.value = ""; status.textContent = "No file selected."; return; }
-    status.textContent = `Selected ${file.name}. Uploading…`;
-    if (file.size > MAX_TEMPLATE) { input.value = ""; status.textContent = "Upload failed: sample must be smaller than 2 MB."; toast(status.textContent, "error"); return; }
+    if (file.size > MAX_TEMPLATE_BYTES) { input.value = ""; status.textContent = "Upload failed: sample must be smaller than 2 MB."; toast(status.textContent, "error"); return; }
+    status.textContent = `Selected ${file.name}. Preparing upload…`;
     upload.disabled = true;
     upload.textContent = "Uploading…";
     onBusy(true);
     let updated;
     try {
       const bytes = await file.arrayBuffer();
+      status.textContent = `Uploading ${file.name}…`;
       updated = await api.putFile(path + "?filename=" + encodeURIComponent(file.name), bytes);
     } catch (e) {
       status.textContent = "Upload failed: " + (e.errors?.template || errorMessage(e));
