@@ -12,7 +12,7 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 
 PLACEHOLDER = re.compile(r"\{\{\s*([A-Za-z0-9_]+)\s*\}\}")
-MAX_TEMPLATE_BYTES = 2 * 1024 * 1024
+MAX_TEMPLATE_BYTES = 10 * 1024 * 1024
 MAX_UNZIPPED_BYTES = 30 * 1024 * 1024
 MAX_PDF_PAGES = 10
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
@@ -33,7 +33,7 @@ def validate_template(blob: bytes) -> str:
     if not blob:
         raise ValueError("empty upload")
     if len(blob) > MAX_TEMPLATE_BYTES:
-        raise ValueError("the template is larger than 2 MB")
+        raise ValueError("the offer letter sample is larger than 10 MB")
     kind = detect_kind(blob)
     if kind == "docx":
         try:
@@ -81,20 +81,96 @@ def build_text_template(content: str) -> bytes:
 
 
 def template_text(kind: str, blob: bytes) -> str:
-    if kind != "docx":
+    if kind == "docx":
+        from docx.oxml.ns import qn
+        from docx.table import Table
+        from docx.text.paragraph import Paragraph
+        doc = _open_docx(blob)
+        lines = []
+        for child in doc.element.body.iterchildren():
+            if child.tag == qn("w:p"):
+                lines.append(Paragraph(child, doc).text)
+            elif child.tag == qn("w:tbl"):
+                table = Table(child, doc)
+                lines.extend(" | ".join(cell.text.replace("\n", " / ").strip() for cell in row.cells) for row in table.rows)
+        text = "\n".join(lines)
+    elif kind == "pdf":
+        # PDF samples can be edited as text and saved as a new DOCX template.
+        from pdfminer.high_level import extract_text
+        try:
+            text = extract_text(io.BytesIO(blob))
+        except Exception:
+            raise ValueError("this PDF text could not be extracted")
+    else:
         return ""
-    from docx.oxml.ns import qn
-    from docx.table import Table
-    from docx.text.paragraph import Paragraph
-    doc = _open_docx(blob)
-    lines = []
-    for child in doc.element.body.iterchildren():
-        if child.tag == qn("w:p"):
-            lines.append(Paragraph(child, doc).text)
-        elif child.tag == qn("w:tbl"):
-            table = Table(child, doc)
-            lines.extend(" | ".join(cell.text.replace("\n", " / ").strip() for cell in row.cells) for row in table.rows)
-    return "\n".join(lines)
+    return suggest_placeholders(_CONTROL.sub("", text))
+
+
+_FIELD_LABELS = (
+    (re.compile(r"^(?:candidate|employee|full)\s+name$|^name$", re.I), "candidate_name"),
+    (re.compile(r"^(?:candidate\s+)?(?:email|e-mail)$", re.I), "candidate_email"),
+    (re.compile(r"^(?:candidate\s+)?(?:phone|mobile|contact\s+number)$", re.I), "candidate_phone"),
+    (re.compile(r"^(?:candidate|employee)\s+(?:id|code)$", re.I), "candidate_id"),
+    (re.compile(r"^(?:offer\s+)?date$", re.I), "offer_date"),
+    (re.compile(r"^(?:designation|job\s+title|position|role)$", re.I), "designation"),
+    (re.compile(r"^(?:company|employer|organization)\s+name$", re.I), "company_name"),
+    (re.compile(r"^(?:annual\s+)?(?:ctc|salary|compensation|package)$", re.I), "ctc_annual"),
+    (re.compile(r"^(?:client|client\s+name)$", re.I), "client"),
+)
+
+
+def suggest_placeholders(text: str) -> str:
+    """Replace likely sample-specific values using labels and common offer-letter phrasing."""
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    replacements: dict[str, str] = {}
+    output = []
+
+    def remember(value: str, field: str) -> str:
+        value = value.strip().strip(" ,:;|\t")
+        if value and len(value) <= 160 and "{{" not in value:
+            replacements[value] = "{{" + field + "}}"
+        return "{{" + field + "}}"
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            output.append(line)
+            continue
+        # Label/value rows from Word tables are exported using a pipe separator.
+        match = re.match(r"^(\s*)([^|:]{1,50}?)(\s*[|:]\s*)(.+?)\s*$", line)
+        if match:
+            label = re.sub(r"\s+", " ", match.group(2)).strip()
+            field = next((key for pattern, key in _FIELD_LABELS if pattern.fullmatch(label)), None)
+            if field:
+                remember(match.group(4), field)
+                line = match.group(1) + match.group(2) + match.group(3) + "{{" + field + "}}"
+        # Date labels are common even when the document uses a plain paragraph.
+        date = re.match(r"^(\s*(?:offer\s+)?date\s*:\s*).+$", line, re.I)
+        if date:
+            line = date.group(1) + remember(line[date.end(1):], "offer_date")
+        dear = re.match(r"^(\s*dear\s+)([^,\n]+)(,?.*)$", line, re.I)
+        if dear and not PLACEHOLDER.search(dear.group(2)):
+            remember(dear.group(2), "candidate_name")
+            line = dear.group(1) + "{{candidate_name}}" + dear.group(3)
+        if re.match(r"^\s*to\s*,?\s*$", stripped, re.I) and i + 1 < len(lines):
+            next_line = lines[i + 1]
+            if next_line.strip() and not re.match(r"^\s*(?:subject|date|ref(?:erence)?\s*(?:no|number)?)[\s:]", next_line, re.I):
+                remember(next_line, "candidate_name")
+                lines[i + 1] = re.sub(re.escape(next_line.strip()), "{{candidate_name}}", next_line, count=1)
+        output.append(line)
+
+    result = "\n".join(output)
+    # Replace repeated mentions of values found beside recognized labels.
+    employer = re.search(r"\bemployment\s+with\s+(.+?)(?=\s+for\s+the\s+position\b)", result, re.I)
+    if employer and not PLACEHOLDER.search(employer.group(1)):
+        remember(employer.group(1), "company_name")
+    for value, token in sorted(replacements.items(), key=lambda item: len(item[0]), reverse=True):
+        result = re.sub(r"(?<!\w)" + re.escape(value) + r"(?!\w)", token, result, flags=re.I)
+    result = re.sub(r"(\bemployment\s+with\s+)(.+?)(?=\s+for\s+the\s+position\b)", r"\1{{company_name}}", result, flags=re.I)
+    # Common unlabelled designation patterns in offer letters.
+    result = re.sub(r"(\bposition\s+of\s+)([^,.;\n]+)", r"\1{{designation}}", result, flags=re.I)
+    result = re.sub(r"(\bsubject\s*:\s*offer\s+of\s+employment\s*[–—-]\s*)([^\n]+)", r"\1{{designation}}", result, flags=re.I)
+    return result
 
 
 def _open_docx(blob: bytes):
