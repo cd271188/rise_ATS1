@@ -2,7 +2,7 @@
 import { api, qs } from "../api.js";
 import { h, clear, card, pageHeader, field, button, toast, errorMessage, confirmBox, state } from "../ui.js";
 import { go } from "../router.js";
-import { breakup, placeholderSummary, eventsList, templateEditorButton } from "./offer.js";
+import { breakup, placeholderSummary, eventsList, templateEditorButton, uploadSampleButton, withExt } from "./offer.js";
 
 const KINDS = [["earning", "Earning (paid to the employee)"], ["employer", "Employer cost (part of CTC)"], ["deduction", "Deduction (outside CTC)"]];
 const CALCS = [["pct_ctc", "% of CTC"], ["pct_basic", "% of Basic"], ["fixed", "Fixed amount"], ["balance", "Balance of the CTC"]];
@@ -98,9 +98,11 @@ export async function compensationPage(root, { id }) {
       manage && status === "active" ? h("div", { class: "card-actions" }, button("Start a new version", () => run(() => api.post(base + "/new-version"), "New version started."), "primary")) : null));
 
     out.push(card("Offer letter template",
-      h("p", { class: "muted" }, "Create the company's letter text here. Use {{name}} for values filled automatically or requested when an offer is made. Automatic fields include candidate_name, candidate_email, candidate_phone, candidate_id, designation, client, job_req_id, company_name and offer_date."),
-      cur?.has_template ? h("div", null, h("strong", null, cur.template_name), " ", h("small", { class: "muted" }, "Editable text template")) : h("p", { class: "muted" }, "No template created yet."),
+      h("p", { class: "muted" }, "Prepare the offer letter template from the owner's sample. Replace sample-specific details with placeholders such as {{candidate_name}}, {{designation}}, {{offer_date}} and compensation fields such as {{basic_annual}}."),
+      cur?.has_template ? h("div", null, h("strong", null, cur.template_name), " ", h("small", { class: "muted" }, cur.template_kind === "docx" ? "Word template" : "PDF template")) : h("p", { class: "muted" }, "No template created yet."),
         h("div", { class: "card-actions" },
+          cur?.has_template ? button("Download sample", () => api.download(base + "/template", withExt(cur.template_name, cur.template_kind)).catch((e) => toast(errorMessage(e), "error"))) : null,
+          editable ? uploadSampleButton(base + "/template", async (s) => { st = s; draft = toDraft(s.current?.components || []); draw(); }, "Upload revised template") : null,
           editable ? templateEditorButton(base + "/template/text", cur, async (s) => { st = s; draft = toDraft(s.current?.components || []); draw(); }) : null),
       cur?.has_template ? placeholderSummary(cur.placeholders) : null));
 
