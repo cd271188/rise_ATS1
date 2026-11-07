@@ -8,7 +8,6 @@ const PERMS = [
   ["create_companies", "Create client companies"],
   ["manage_companies", "Rename, suspend and reactivate companies"],
   ["manage_client_users", "Add client users, change roles, disable, reset passwords"],
-  ["manage_compensation", "Build offer letter compensation structures and send them to companies"],
   ["manage_ai", "Turn AI features on or off for companies"],
   ["create_job_requirements", "Create client job requirements"],
   ["view_audit", "See the Rise activity log (who did what to which company)"],
@@ -161,7 +160,6 @@ export async function companiesPage(root) {
     const renderCompany = (company) => {
       const actions = [
         has("manage_client_users") ? button("Manage users", () => usersDialog(company, draw)) : null,
-        has("manage_compensation") ? button("Offer letter", () => go("/company/" + company.id + "/compensation")) : null,
         can.creator() ? button("Add vendor", () => createVendorDialog(draw, `/platform/companies/${company.id}/vendors`, company.name)) : null,
         has("manage_ai") ? button(company.ai_enabled ? "Turn AI off" : "Turn AI on", async () => {
           if (company.is_active && !(await confirmBox("Turn AI on", `${company.name}'s CV text and job descriptions will be sent to ${state.meta?.ai_where || "the AI service"}. Only do this with the company's agreement.`, "Turn on"))) return;
