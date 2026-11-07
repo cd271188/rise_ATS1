@@ -53,7 +53,7 @@ export function eventsList(events) {
 }
 
 
-export function uploadSampleButton(path, onDone, label = "Upload offer letter sample") {
+export function uploadSampleButton(path, onDone, label = "Upload offer letter sample", onBusy = () => {}) {
   const input = h("input", { type: "file", accept: ".docx,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document", hidden: true });
   const upload = button(label, () => input.click());
   const status = h("small", { class: "muted", role: "status" });
@@ -64,6 +64,7 @@ export function uploadSampleButton(path, onDone, label = "Upload offer letter sa
     if (file.size > MAX_TEMPLATE) { input.value = ""; status.textContent = "Upload failed: sample must be smaller than 2 MB."; toast(status.textContent, "error"); return; }
     upload.disabled = true;
     upload.textContent = "Uploading…";
+    onBusy(true);
     let updated;
     try {
       const bytes = await file.arrayBuffer();
@@ -76,6 +77,7 @@ export function uploadSampleButton(path, onDone, label = "Upload offer letter sa
       input.value = "";
       upload.disabled = false;
       upload.textContent = label;
+      onBusy(false);
     }
     if (!updated) return;
     status.textContent = `Uploaded ${file.name}.`;
