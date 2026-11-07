@@ -1,7 +1,7 @@
 // Client owner: create, review, and approve the offer letter template and compensation setup.
 import { api, qs } from "../api.js";
 import { h, clear, card, pageHeader, field, button, toast, errorMessage, confirmBox, can, modal } from "../ui.js";
-import { breakup, placeholderSummary, eventsList, templateEditorButton, uploadSampleButton } from "./offer.js";
+import { breakup, placeholderSummary, eventsList, templateEditorButton, uploadSampleButton, statusBadge } from "./offer.js";
 
 const KINDS = [["earning", "Earning (paid to the employee)"], ["employer", "Employer cost (part of CTC)"], ["deduction", "Deduction (outside CTC)"]];
 const CALCS = [["pct_ctc", "% of CTC"], ["pct_basic", "% of Basic"], ["fixed", "Fixed amount"], ["balance", "Balance of the CTC"]];
@@ -46,6 +46,14 @@ export async function compensationPage(root) {
   let st = await api.get(base);
   let draft = toDraft(st.current?.components || []);
   let ctc = "";
+  let templateUploading = false;
+  let saveDraftButton = null;
+  let approveButton = null;
+  const setTemplateUploading = (busy) => {
+    templateUploading = busy;
+    if (saveDraftButton) saveDraftButton.disabled = busy;
+    if (approveButton) approveButton.disabled = busy;
+  };
 
   const reload = async (fromServer = false) => {
     st = await api.get(base + qs({ ctc }));
@@ -53,6 +61,10 @@ export async function compensationPage(root) {
     draw();
   };
   const run = async (fn, okMsg) => {
+    if (templateUploading) {
+      toast("Wait for the template upload to finish before saving the draft.", "warn");
+      return;
+    }
     try { st = await fn(); draft = toDraft(st.current?.components || []); if (okMsg) toast(okMsg, "success"); } catch (e) { toast(e.errors?.structure || errorMessage(e), "error"); }
     draw();
   };
@@ -111,7 +123,7 @@ export async function compensationPage(root) {
       h("p", { class: "muted" }, "Upload your sample or create the template in the editor. Replace sample-specific details with placeholders such as {{candidate_name}}, {{designation}}, {{offer_date}} and compensation fields such as {{basic_annual}}."),
       cur?.has_template ? h("div", null, h("strong", null, cur.template_name), " ", h("small", { class: "muted" }, cur.template_kind === "docx" ? "Word template" : "PDF template")) : h("p", { class: "muted" }, "No template created yet."),
         h("div", { class: "card-actions" },
-          editable ? uploadSampleButton(base + "/template", async (s) => { st = s; draft = toDraft(s.current?.components || []); draw(); }, cur?.has_template ? "Upload revised template" : "Upload offer letter sample") : null,
+          editable ? uploadSampleButton(base + "/template", async (s) => { st = s; draft = toDraft(s.current?.components || []); draw(); }, cur?.has_template ? "Upload revised template" : "Upload offer letter sample", setTemplateUploading) : null,
           editable ? templateEditorButton(base + "/template/text", cur, async (s) => { st = s; draft = toDraft(s.current?.components || []); draw(); }) : null),
       cur?.has_template ? placeholderSummary(cur.placeholders) : null));
 
@@ -120,7 +132,11 @@ export async function compensationPage(root) {
       previewTemplate()));
     
     out.push(card("Compensation components", editor(editable)));
-    if (editable) out.push(h("div", { class: "card-actions" }, button("Save draft", () => run(save, "Draft saved."), "primary")));
+    if (editable) {
+      saveDraftButton = button("Save draft", () => run(save, "Draft saved."), "primary");
+      saveDraftButton.disabled = templateUploading;
+      out.push(h("div", { class: "card-actions" }, saveDraftButton));
+    } else saveDraftButton = null;
     if (!manage) out.push(h("p", { class: "muted" }, "Only the client company owner can edit or approve this offer setup."));
 
     if (cur?.components.length) {
@@ -133,7 +149,7 @@ export async function compensationPage(root) {
     if (editable && cur) {
       out.push(card("Review and approve",
         h("p", { class: "muted" }, "Review the template preview and compensation breakup above. Approving activates this version for offer generation and downloads."),
-        h("div", { class: "card-actions" }, button("Approve offer letter setup", async () => {
+        h("div", { class: "card-actions" }, approveButton = button("Approve offer letter setup", async () => {
           if (!(await confirmBox("Approve offer letter setup", "This template and compensation structure will become active. Offer letters can then be generated for eligible candidates.", "Approve"))) return;
           try {
             st = await save();
@@ -143,7 +159,8 @@ export async function compensationPage(root) {
           } catch (e) { toast(e.errors?.structure || errorMessage(e), "error"); }
           draw();
         }, "primary"))));
-    }
+    approveButton.disabled = templateUploading;
+    } else approveButton = null;
 
     if (cur) out.push(card("History", eventsList(cur.events)));
     return out;
