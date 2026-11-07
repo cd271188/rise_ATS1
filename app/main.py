@@ -20,7 +20,7 @@ from .services.common import Conflict, Forbidden, NotFound, QuotaExceeded, Valid
 log = logging.getLogger("ats")
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
-CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; "
+CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'self' blob:; "
        "object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 
 
