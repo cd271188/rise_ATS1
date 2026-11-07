@@ -99,12 +99,18 @@ def delete_interview(iid: int, ctx: Ctx = Depends(get_ctx)):
 # -------------------------------- dashboard / lists --------------------------------
 
 @router.get("/dashboard")
-def dashboard(on: str = "", ctx: Ctx = Depends(get_ctx)):
+def dashboard(on: str = "", from_date: str = "", to_date: str = "", ctx: Ctx = Depends(get_ctx)):
     try:
         day = date.fromisoformat(on) if on else None
+        start = date.fromisoformat(from_date) if from_date else None
+        end = date.fromisoformat(to_date) if to_date else None
     except ValueError:
         raise HTTPException(400, "use the format YYYY-MM-DD")
-    return dash.dashboard(ctx, day)
+    if start and end and start > end:
+        raise HTTPException(400, "from_date must be on or before to_date")
+    if bool(start) != bool(end):
+        raise HTTPException(400, "provide both from_date and to_date")
+    return dash.dashboard(ctx, day, start, end)
 
 
 @router.get("/reports/recruiters")
