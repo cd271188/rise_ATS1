@@ -84,7 +84,10 @@ export async function compensationPage(root) {
         const period = options([["monthly", "per month"], ["annual", "per year"]], c.period);
         period.hidden = c.calc !== "fixed";
         for (const el of [kind, calc, period]) el.disabled = !editable;
-        label.addEventListener("input", () => { if (c.auto) { c.key = slug(label.value); key.value = c.key; } });
+        label.addEventListener("input", () => {
+          c.label = label.value;
+          if (c.auto) { c.key = slug(label.value); key.value = c.key; }
+        });
         key.addEventListener("input", () => { c.auto = false; c.key = key.value; });
         kind.addEventListener("change", () => { c.kind = kind.value; });
         calc.addEventListener("change", () => { c.calc = calc.value; value.disabled = c.calc === "balance"; if (c.calc === "balance") { c.value = ""; value.value = ""; } period.hidden = c.calc !== "fixed"; });
@@ -111,7 +114,7 @@ export async function compensationPage(root) {
     const editable = manage && (!cur || ["draft", "changes_requested", "in_review"].includes(status));
     const feedback = status === "changes_requested" ? cur.events.slice().reverse().find((e) => e.kind === "feedback") : null;
     const out = [];
-    const editLetterButton = editable ? templateEditorButton(base + "/template/text", cur, async (s) => { st = s; draft = toDraft(s.current?.components || []); draw(); }) : null;
+    const editLetterButton = editable ? templateEditorButton(base + "/template/text", () => ({ ...(st.current || {}), components: draft.map((c) => ({ ...c })), template_text: st.current?.template_text || "" }), async (s) => { st = s; draw(); }) : null;
     if (editLetterButton) editLetterButton.id = "offer-letter-editor-button";
 
     if (feedback) out.push(h("div", { class: "notice warn" }, h("strong", null, "This draft needs changes"), h("small", { class: "muted" }, ` (${feedback.at}${feedback.by ? " · " + feedback.by : ""})`), h("p", null, feedback.note)));
