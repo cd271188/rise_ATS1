@@ -133,13 +133,44 @@ export function templateEditorButton(path, current, onDone) {
       b.addEventListener("mousedown", (event) => event.preventDefault());
       return b;
     };
+    const selectedCell = () => {
+      const selection = window.getSelection();
+      let node = selection?.anchorNode;
+      if (node?.nodeType === Node.TEXT_NODE) node = node.parentElement;
+      return node?.closest?.("td, th") || null;
+    };
+    const addTablePart = (part) => {
+      const cell = selectedCell();
+      const table = cell?.closest("table");
+      if (!table) { toast("Place the cursor in a table first.", "warn"); return; }
+      const row = cell.closest("tr");
+      if (part === "row") {
+        const next = table.ownerDocument.createElement("tr");
+        [...row.cells].forEach(() => {
+          const fresh = table.ownerDocument.createElement("td");
+          fresh.innerHTML = "<br>";
+          next.append(fresh);
+        });
+        row.after(next);
+        return;
+      }
+      const index = cell.cellIndex;
+      table.querySelectorAll("tr").forEach((tableRow) => {
+        const existing = tableRow.cells[index];
+        const fresh = table.ownerDocument.createElement(existing?.tagName.toLowerCase() || "td");
+        fresh.innerHTML = "<br>";
+        existing ? existing.after(fresh) : tableRow.append(fresh);
+      });
+    };
     const toolbar = h("div", { class: "offer-editor-toolbar", role: "toolbar", "aria-label": "Offer letter formatting" },
       tool("B", "Bold", () => document.execCommand("bold")),
       tool("I", "Italic", () => document.execCommand("italic")),
       tool("U", "Underline", () => document.execCommand("underline")),
       tool("H2", "Heading", () => document.execCommand("formatBlock", false, "h2")),
       tool("• List", "Bulleted list", () => document.execCommand("insertUnorderedList")),
-      tool("Insert table", "Insert a table", () => document.execCommand("insertHTML", false, "<table><tbody><tr><th>Component</th><th>Per annum (INR)</th><th>Per month (INR)</th></tr><tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr></tbody></table><p><br></p>")),
+      tool("Insert table", "Insert a table", () => document.execCommand("insertHTML", false, "<table><tbody><tr><th>Col 1</th><th>Col 2</th><th>Col 3</th></tr><tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr></tbody></table><p><br></p>")),
+      tool("Add row", "Add a row to the current table", () => addTablePart("row")),
+      tool("Add column", "Add a column to the current table", () => addTablePart("column")),
       current?.components?.length ? tool("Insert compensation Annexure A", "Insert a compensation table using this version's components", () => document.execCommand("insertHTML", false, compensationAnnexure(current.components))) : null);
     const save = h("button", { class: "btn primary", type: "button" }, "Save offer letter");
     const body = h("div", { class: "stack" },
