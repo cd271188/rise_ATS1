@@ -147,13 +147,27 @@ def compute(components: list[dict], ctc: int) -> dict:
             raise ValidationError({"ctc": "the other components add up to more than this CTC"})
         annual[balance["key"]] = rest
         allocated = ctc
-    rows = []
-    for c in components:
+    component_rows = []
+    display_order = {"basic": 0, "hra": 1, "special": 2, "employer_pf": 0, "gratuity": 1}
+    kind_order = {"earning": 0, "employer": 1, "deduction": 2}
+    for c in sorted(components, key=lambda item: (kind_order.get(item["kind"], 3), display_order.get(item["key"], 10), item["key"])):
         a = annual[c["key"]]
         m = _round(Decimal(a) / 12)
-        rows.append({"key": c["key"], "label": _component_label(c.get("label")), "kind": c["kind"], "annual": a, "monthly": m,
-                     "annual_text": inr(a), "monthly_text": inr(m)})
-    gross = sum(r["annual"] for r in rows if r["kind"] == "earning")
+        component_rows.append({"key": c["key"], "label": _component_label(c.get("label")), "kind": c["kind"], "annual": a, "monthly": m,
+                               "annual_text": inr(a), "monthly_text": inr(m)})
+    gross = sum(r["annual"] for r in component_rows if r["kind"] == "earning")
+    gross_monthly = _round(Decimal(gross) / 12)
+    ctc_monthly = _round(Decimal(ctc) / 12)
+    earnings = [r for r in component_rows if r["kind"] == "earning"]
+    employer_costs = [r for r in component_rows if r["kind"] == "employer"]
+    deductions = [r for r in component_rows if r["kind"] == "deduction"]
+    rows = earnings + [
+        {"key": "gross", "label": "Gross Salary", "kind": "total", "annual": gross, "monthly": gross_monthly,
+         "annual_text": inr(gross), "monthly_text": inr(gross_monthly)}
+    ] + employer_costs + deductions + [
+        {"key": "ctc", "label": "Total Annual CTC", "kind": "total", "annual": ctc, "monthly": ctc_monthly,
+         "annual_text": inr(ctc), "monthly_text": inr(ctc_monthly)}
+    ]
     return {"ctc": ctc, "ctc_text": inr(ctc), "rows": rows, "gross": gross, "gross_text": inr(gross),
             "unallocated": ctc - allocated, "unallocated_text": inr(ctc - allocated)}
 
