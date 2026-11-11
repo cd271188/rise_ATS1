@@ -49,7 +49,7 @@ function newJobDialog({ companyId = null } = {}) {
     const body = h("form", { class: "stack" },
       h("datalist", { id: "job-clients" }, (state.meta?.lists?.clients || []).map((c) => h("option", { value: c }))),
       h("div", { class: "form-grid" },
-        field("Client *", f.client, { hint: "Add client names in Settings > Clients, or type a new name here." }),
+        field("Client *", f.client, { hint: "Choose a listed client name, or type a new name here." }),
         field("ATS Job ID", h("input", { type: "text", value: "Assigned automatically after saving", disabled: true }), { hint: "The ATS assigns a unique ID when you create this requirement." }),
         field("Client-provided Job ID *", f.client_ref, { hint: "Enter the job number or role ID given by the client." }),
         field("Role *", f.title), field("Request received on", f.received_on),
@@ -139,7 +139,7 @@ export async function jobsPage(root, params = {}) {
   companySelect?.addEventListener("change", () => { companyId = Number(companySelect.value) || null; draw(); });
   const create = platform ? platformCanCreate : writable;
   root.append(...[
-    pageHeader("Client Requirements", platform ? "Choose a client company to add its job requirements." : "Add a client job request, enter its requirements, then find matching candidates. Manage client names in Settings > Clients.",
+    pageHeader("Client Requirements", platform ? "Choose a client company to add its job requirements." : "Add a client job request, enter its requirements, then find matching candidates.",
       create && (!platform || companyId) ? button("New job", () => newJobDialog({ companyId }), "primary") : null),
     platform ? companySelect : null,
     platform ? null : searchCard(),

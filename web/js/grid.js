@@ -1,6 +1,7 @@
 // Editable, server-paginated data grid. Cells save one at a time through opts.save(row, key, value) (PATCH + version).
 import { ApiError } from "./api.js";
 import { h, clear, toast, errorMessage, select, optionsFor, statusBadge, debounce } from "./ui.js";
+import { go } from "./router.js";
 
 const ACTION_W = 104;
 const MIN_W = 60;
@@ -128,6 +129,24 @@ export function createGrid({ columns, load, canEdit, save, rowActions, onChange,
   function paint(td, row, col) {
     clear(td);
     const t = text(row, col);
+    if (col.inlineSelect) {
+      const input = select(optionsFor(col.list), t, { class: "grid-inline-select", "aria-label": col.label });
+      input.addEventListener("mousedown", (e) => e.stopPropagation());
+      input.addEventListener("click", (e) => e.stopPropagation());
+      input.addEventListener("change", () => {
+        if (input.value !== t) saveCell(row, col, td, input.value);
+      });
+      td.append(input);
+      td.title = col.label;
+      return;
+    }
+    if (col.linkToDetails) {
+      const link = h("a", { class: "grid-detail-link", href: "#/candidate/" + encodeURIComponent(row.candidate_id),
+        onclick: (e) => { e.preventDefault(); go("/candidate/" + encodeURIComponent(row.candidate_id)); } }, t);
+      td.append(link);
+      td.title = "Open candidate details";
+      return;
+    }
     if (col.key === "current_status") td.append(statusBadge(t));
     else td.textContent = t;
     td.title = t;
@@ -156,7 +175,7 @@ export function createGrid({ columns, load, canEdit, save, rowActions, onChange,
       arrows[i].parentElement.setAttribute("aria-sort", active ? (st.dir === "asc" ? "ascending" : "descending") : "none");
     });
     const from = st.rows.length ? st.offset + 1 : 0;
-    info.textContent = st.total ? '${from}-${st.offset + st.rows.length} if ${st.total}' : "0 rows";
+    info.textContent = st.total ? `Showing ${from}–${st.offset + st.rows.length} of ${st.total}` : "0 rows";
     prev.disabled = st.offset === 0;
     next.disabled = st.offset + st.limit >= st.total;
     paintSel();
@@ -265,8 +284,11 @@ export function createGrid({ columns, load, canEdit, save, rowActions, onChange,
           toast("Someone else changed this row. The latest values are shown - repeat your edit.", "warn", 8000);
         } else {
           const why = (ex.errors && ex.errors[col.key]) || errorMessage(ex);
-          td.classList.add("cell-error");
-          td.title = why;
+          if (col.inlineSelect) repaintRow(row);
+          else {
+            td.classList.add("cell-error");
+            td.title = why;
+          }
           setMsg(`${col.label}: ${why}`, true);
           toast(`${col.label}: ${why}`, "error");
         }

@@ -3,7 +3,7 @@ from datetime import date, timedelta
 
 from sqlalchemy import func, select
 
-from ..fields import STATUSES
+from ..fields import INTERVIEW_STATUSES
 from ..models import Candidate, Interview, Job
 from .candidates import scope
 from .common import Ctx
@@ -17,7 +17,7 @@ def week_start(d: date) -> date:
 
 def _rows(ctx: Ctx):
     return ctx.db.execute(select(
-        Candidate.recruiter, Candidate.current_status, Candidate.profile_submitted_to_client,
+        Candidate.recruiter, Candidate.current_status, Candidate.process, Candidate.profile_submitted_to_client,
         Candidate.date_added, Candidate.client_submission_date, Candidate.vendor_org_id).where(
         *scope(ctx))).all()
 
@@ -62,8 +62,8 @@ def _report(names, rows) -> list[dict]:
         out.append({"recruiter": n, "candidates_added": len(mine),
                     "vendor_submissions": sum(r.vendor_org_id is not None for r in mine),
                     "client_submissions": sum(r.profile_submitted_to_client == "Yes" for r in mine),
-                    "offers": sum(r.current_status == "Offer" for r in mine),
-                    "yet_to_join": sum(r.current_status == "Yet to Join" for r in mine),
+                    "offers": sum(r.current_status == "Yet to Offer" for r in mine),
+                    "yet_to_join": sum(r.current_status == "Yet to join" for r in mine),
                     "drops": sum(r.current_status == "Drop" for r in mine)})
     return out
 
@@ -73,37 +73,38 @@ def recruiter_report(ctx: Ctx) -> list[dict]:
     return _report(_names(ctx, rows), rows)
 
 
-def dashboard(ctx: Ctx, on: date | None = None) -> dict:
+def dashboard(ctx: Ctx, on: date | None = None, start: date | None = None, end: date | None = None) -> dict:
     on = on or ctx.today()
+    start = start or week_start(on)
+    end = end or (week_start(on) + timedelta(days=6))
     nxt = (on.replace(day=28) + timedelta(days=4)).replace(day=1)
     periods = {"today": (on, on), "week": (week_start(on), week_start(on) + timedelta(days=6)),
                "month": (on.replace(day=1), nxt - timedelta(days=1))}
-    rows = _rows(ctx)
-    names = _names(ctx, rows)
-
-    def inside(value, p):
-        return bool(value) and periods[p][0].isoformat() <= value <= periods[p][1].isoformat()
+    all_rows = _rows(ctx)
+    rows = [r for r in all_rows if r.date_added and start.isoformat() <= r.date_added <= end.isoformat()]
+    names = _names(ctx, all_rows)
 
     def table(field, only_yes):
         out = []
         for n in names:
-            mine = [r for r in rows if r.recruiter == n and (not only_yes or r.profile_submitted_to_client == "Yes")]
-            out.append({"recruiter": n, **{p: sum(inside(getattr(r, field), p) for r in mine) for p in periods}})
-        out.append({"recruiter": "Total", **{p: sum(x[p] for x in out) for p in periods}})
+            mine = [r for r in all_rows if r.recruiter == n and (not only_yes or r.profile_submitted_to_client == "Yes")]
+            out.append({"recruiter": n, "selected": sum(bool(getattr(r, field)) and start.isoformat() <= getattr(r, field) <= end.isoformat() for r in mine)})
+        out.append({"recruiter": "Total", "selected": sum(x["selected"] for x in out)})
         return out
 
-    statuses = {s: 0 for s in STATUSES}
+    statuses = {s: 0 for s in INTERVIEW_STATUSES}
     for r in rows:
         statuses[r.current_status] = statuses.get(r.current_status, 0) + 1
     return {
         "as_of": on.isoformat(),
+        "selected_range": [start.isoformat(), end.isoformat()],
         "periods": {p: [a.isoformat() for a in v] for p, v in periods.items()},
         "kpis": {
             "total_candidates": len(rows),
             "submitted_to_client": sum(r.profile_submitted_to_client == "Yes" for r in rows),
-            "in_interview": sum(r.current_status in ("L1 Interview", "L2 Interview", "L3 Interview") for r in rows),
-            "offers": statuses.get("Offer", 0),
-            "yet_to_join": statuses.get("Yet to Join", 0),
+            "in_interview": sum(r.process in ("L1 Interview", "L2 Interview", "L3 Interview", "HR Discussion") for r in rows),
+            "offers": statuses.get("Yet to Offer", 0),
+            "yet_to_join": statuses.get("Yet to join", 0),
             "drops": statuses.get("Drop", 0),
         },
         "recruiter_submissions": table("date_added", False),
@@ -122,7 +123,7 @@ def followups_due(ctx: Ctx, on: date | None = None) -> list[dict]:
     stmt = select(Interview, Candidate).join(Candidate, Candidate.id == Interview.candidate_id).where(
         Interview.org_id == ctx.data_org_id, *scope(ctx),
         Interview.next_followup_date.is_not(None), Interview.next_followup_date <= on.isoformat(),
-        Candidate.current_status.not_in(("Drop", "Yet to Join"))).order_by(Interview.next_followup_date, Interview.id)
+        Candidate.current_status.not_in(("Drop", "Joined"))).order_by(Interview.next_followup_date, Interview.id)
     latest = {}
     for i, c in ctx.db.execute(stmt):
         latest[c.id] = (i, c)

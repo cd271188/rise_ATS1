@@ -14,7 +14,6 @@ PERMISSIONS = {
     "create_companies": "Create client companies",
     "manage_companies": "Rename, suspend and reactivate companies",
     "manage_client_users": "Add client users, change roles, disable, reset passwords",
-    "manage_compensation": "Build offer letter compensation structures and send them to companies",
     "manage_ai": "Turn AI features on or off for companies",
     "create_job_requirements": "Create client job requirements",
     "view_audit": "See the Rise activity log (who did what to which company)",
@@ -37,7 +36,7 @@ def _need_platform(ctx: Ctx):
 def _need(ctx: Ctx, perm: str):
     _need_platform(ctx)
     if perm not in permissions_of(ctx.user):
-        raise Forbidden("you have not been given this permission: " + PERMISSIONS[perm].lower())
+        raise Forbidden("you have not been given this permission: " + PERMISSIONS.get(perm, perm.replace("_", " ")).lower())
 
 
 def _need_creator(ctx: Ctx):
@@ -166,7 +165,7 @@ def create_company(ctx: Ctx, data: dict) -> dict:
                  role="owner", must_change_password=True)
     ctx.db.add(owner)
     ctx.db.flush()
-    audit_company(ctx, "company.create", "org", org.id, {"owner": email})
+    audit_company(ctx, "company.create", org, "org", org.id, {"owner": email})
     audit.record_raw(ctx.db, org.id, None, "org.created", ctx.ip, {"by": BY})
     ctx.db.commit()
     return {**company_dict(ctx.db, org), "temporary_password": temp}
@@ -207,11 +206,33 @@ def create_company_vendor(ctx: Ctx, org_id: int, data: dict) -> dict:
     _need_creator(ctx)
     client = _client(ctx, org_id)
     org, temp = vendors.build_vendor(ctx, client, data)
-    audit_company(ctx, "vendor.create", "org", org.id, {"client": client.name, "vendor": org.name})
+    audit_company(ctx, "vendor.create", org, "org", org.id, {"client": client.name, "vendor": org.name})
     audit.record_raw(ctx.db, client.id, None, "vendor.created_by_platform", ctx.ip, {"by": BY, "vendor_id": org.id})
     audit.record_raw(ctx.db, org.id, None, "org.created_as_vendor", ctx.ip, {"by": BY, "client": client.name})
     ctx.db.commit()
     return {**vendors.vendor_dict(ctx.db, org), "temporary_password": temp}
+
+
+def reset_company_vendor_user_password(ctx: Ctx, org_id: int, vendor_id: int, uid: int) -> dict:
+    """Only the Rise creator can reset a user account belonging to a client's vendor."""
+    _need_creator(ctx)
+    client = _client(ctx, org_id)
+    vendor = ctx.db.get(Organization, vendor_id)
+    if not vendor or vendor.parent_org_id != client.id:
+        raise NotFound("vendor not found")
+    user = ctx.db.scalar(select(User).where(User.id == uid, User.org_id == vendor.id))
+    if not user:
+        raise NotFound("user not found")
+    temp = _temp()
+    user.password_hash = security.hash_password(temp)
+    user.must_change_password = True
+    revoke_all(ctx.db, user.id)
+    audit_company(ctx, "company.admin_account_change", client, "user", user.id,
+                  {"vendor": vendor.name, "email": user.email, "role": user.role, "change": "password reset"})
+    audit.record_raw(ctx.db, vendor.id, None, "user.reset_password_by_platform", ctx.ip,
+                     {"by": BY, "user_id": user.id, "client_id": client.id})
+    ctx.db.commit()
+    return {"temporary_password": temp}
 
 
 # --------------------------------------------- client user accounts

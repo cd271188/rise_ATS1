@@ -22,6 +22,8 @@ ENTRYPOINT ["python", "/usr/local/bin/ats-entrypoint.py"]
 ENV ATS_HOST=0.0.0.0 ATS_PORT=8000 ATS_AUTO_CREATE_TABLES=false
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
-    CMD python -c "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz',timeout=4).status==200 else 1)"
+    CMD python -c "import os, urllib.request, sys; p=os.environ.get('PORT',os.environ.get('ATS_PORT','8000')); sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{p}/healthz',timeout=4).status==200 else 1)"
 
-CMD ["python", "-m", "app"]
+
+CMD ["/bin/sh", "/srv/scripts/render_start.sh"]
+

@@ -40,6 +40,11 @@ async def rise_template(org_id: int, request: Request, filename: str = "", ctx: 
     return svc.rise_template(ctx, org_id, await _upload(request, ctx), filename)
 
 
+@router.put("/platform/companies/{org_id}/offer-structure/template/text")
+def rise_template_text(org_id: int, data=Depends(json_body), ctx: Ctx = Depends(get_ctx)):
+    return svc.rise_template_text(ctx, org_id, data)
+
+
 @router.get("/platform/companies/{org_id}/offer-structure/template")
 def rise_template_file(org_id: int, ctx: Ctx = Depends(get_ctx)):
     return _file(svc.rise_template_file(ctx, org_id))
@@ -61,14 +66,35 @@ def owner_get(ctc: str = "", ctx: Ctx = Depends(get_ctx)):
     return svc.owner_get(ctx, ctc)
 
 
+@router.put("/offer-structure")
+def owner_save(data=Depends(json_body), ctx: Ctx = Depends(get_ctx)):
+    return svc.owner_save(ctx, data)
+
+
+@router.post("/offer-structure/new-version")
+def owner_new_version(ctx: Ctx = Depends(get_ctx)):
+    return svc.owner_new_version(ctx)
+
+
 @router.put("/offer-structure/template")
 async def owner_template(request: Request, filename: str = "", ctx: Ctx = Depends(get_ctx)):
     return svc.owner_template(ctx, await _upload(request, ctx), filename)
 
 
+@router.put("/offer-structure/template/text")
+def owner_template_text(data=Depends(json_body), ctx: Ctx = Depends(get_ctx)):
+    return svc.owner_template_text(ctx, data)
+
+
 @router.get("/offer-structure/template")
 def owner_template_file(ctx: Ctx = Depends(get_ctx)):
     return _file(svc.owner_template_file(ctx))
+
+
+@router.get("/offer-structure/template/preview")
+def owner_template_preview(ctx: Ctx = Depends(get_ctx)):
+    return Response(svc.owner_template_preview(ctx), media_type="application/pdf",
+                    headers={"Content-Disposition": 'inline; filename="offer-template-preview.pdf"'})
 
 
 @router.post("/offer-structure/accept")

@@ -9,16 +9,19 @@ const WIDTHS = { candidate_id: 100, full_name: 190, textarea: 260, date: 130, nu
 function buildColumns() {
   const fields = state.meta.fields;
   const byKey = new Map(fields.map((f) => [f.key, f]));
-  const order = ["full_name", ...fields.map((f) => f.key).filter((k) => k !== "full_name")];
+  const hidden = new Set(["earliest_joining_date", "how_soon_can_join", "recruiter_notes"]);
+  const order = ["full_name", ...fields.map((f) => f.key).filter((k) => k !== "full_name" && !hidden.has(k))];
+  const process = byKey.get("process");
   return [
-    { key: "candidate_id", label: "ID", type: "text", readonly: true, width: WIDTHS.candidate_id },
-    ...order.map((k) => {
+    { key: "candidate_id", label: "ID", type: "text", readonly: true, width: WIDTHS.candidate_id, linkToDetails: true },
+    ...order.filter((k) => k !== "process").map((k) => {
       const f = byKey.get(k);
-      return { key: k, label: f.label, type: f.type, list: f.list, width: WIDTHS[k] || WIDTHS[f.type] || 160 };
+      return { key: k, label: f.label, type: f.type, list: f.list, width: WIDTHS[k] || WIDTHS[f.type] || 160,
+        ...(k === "full_name" ? { linkToDetails: true } : {}) };
     }),
-    { key: "current_status", label: "Status", type: "text", readonly: true, width: 150 },
+    { key: "process", label: process.label, type: "select", list: process.list, inlineSelect: true, width: WIDTHS.process || WIDTHS.select },
+    { key: "current_status", label: "Interview Status", type: "select", list: "status", inlineSelect: true, width: 170 },
     ...((state.meta.vendors || []).length ? [{ key: "vendor", label: "Vendor", type: "text", readonly: true, sortable: false, filter: "none", width: 160 }] : []),
-    { key: "duplicate_check", label: "Duplicate?", type: "text", readonly: true, sortable: false, filter: "none", width: 130 },
     { key: "last_updated", label: "Last updated", type: "text", readonly: true, filter: "none", width: 150 },
   ];
 }
@@ -49,9 +52,14 @@ export async function candidatesPage(root, params) {
     columns: buildColumns(),
     load: (g) => api.get("/candidates" + qs({ q: q.value.trim(), duplicate: dup.value, vendor_id: vendor ? vendor.value: "", date_from: from.value, date_to: to.value, ...g })),
     canEdit: (row, col) => writable && !col.readonly && (can.admin() || state.user.org.team_edit || row.created_by === state.user.id),
-    save: (row, key, value) => api.patch(`/candidates/${row.candidate_id}`, { [key]: value, version: row.version }),
+    save: (row, key, value) => {
+      if (key === "current_status") {
+        return api.patch(`/candidates/${row.candidate_id}/interview-status`, { status: value });
+      }
+      return api.patch(`/candidates/${row.candidate_id}`, { [key]: value, version: row.version });
+    },
     rowActions: (row) => [
-      h("a", { class: "icon-link", href: "#/candidate/" + row.candidate_id, title: "Open " + row.candidate_id, "aria-label": "Open " + row.candidate_id }, "↗"),
+      h("span", { class: "icon-link", title: "Candidate details open from the ID or name" }, "↗"),
       writable ? h("button", { class: "icon-link", type: "button", title: "Add interview entry", "aria-label": "Add interview entry",
         onclick: () => openInterviewForm({ candidateId: row.candidate_id, onSaved: () => grid.reload() }) }, "📅") : null,
       can.admin() ? h("button", { class: "icon-link danger-text", type: "button", title: "Delete", "aria-label": "Delete " + row.candidate_id,

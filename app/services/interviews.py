@@ -1,9 +1,9 @@
 """Interview entries. The newest entry's status becomes the candidate's current status (feedback loop)."""
 from sqlalchemy import select
 
-from ..fields import DEFAULT_STATUS
+from ..fields import DEFAULT_STATUS, INTERVIEW_STATUSES
 from ..models import Candidate, Interview, utcnow
-from . import audit
+from . import audit, candidates
 from .candidates import check_can_edit, find_row, parse_ref, public_id, scope
 from .common import Ctx, Forbidden, NotFound, ValidationError
 from .validation import clean_interview
@@ -64,6 +64,24 @@ def create_interview(ctx: Ctx, data: dict, commit: bool = True) -> dict:
     if commit:
         ctx.db.commit()
     return _dict(i, cand)
+
+
+def set_current_status(ctx: Ctx, ref: str, status: str) -> dict:
+    """Change the latest interview outcome from the candidate grid, creating its first entry if needed."""
+    status = str(status or "").strip()
+    if status not in INTERVIEW_STATUSES:
+        raise ValidationError({"current_status": "choose a valid interview status"})
+    cand = candidates.get_row(ctx, ref)
+    check_can_edit(ctx, cand)
+    # Keep each status change as its own dated history entry.
+    ctx.db.add(Interview(org_id=cand.org_id, candidate_id=cand.id, created_by=ctx.user.id,
+                         interview_stage=cand.process, status=status))
+    ctx.db.flush()
+    sync_status(ctx, cand)
+    audit.record(ctx, "interview.status_update", "candidate", public_id(cand.seq), {"status": status})
+    ctx.db.commit()
+    return candidates.to_dict(cand, ctx.role, candidates.dup_reasons(ctx, [cand]).get(cand.id),
+                              candidates.vendor_names(ctx, [cand]))
 
 
 def update_interview(ctx: Ctx, iid: int, data: dict) -> dict:

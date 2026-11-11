@@ -16,6 +16,7 @@ NAVY, BLUE = "1F3864", "2F6DB5"
 
 MASTER_COLUMNS = [
     ("Candidate ID", "candidate_id"), ("Date Added", "date_added"), ("Candidate Name", "full_name"),
+    ("Process", "process"),
     ("Current Company", "current_company"), ("Location", "current_location"),
     ("Experience (Yrs)", "total_experience_years"), ("Current CTC (LPA)", "current_ctc_lakhs"),
     ("Expected CTC (LPA)", "expected_ctc_lakhs"), ("Notice Period (Days)", "official_notice_period"),
@@ -24,7 +25,7 @@ MASTER_COLUMNS = [
     ("Date of Birth (Optional)", "date_of_birth"), ("Email", "email"), ("Phone", "phone"),
     ("Recruiter", "recruiter"), ("Client", "client"), ("Role", "primary_skill_role"),
     ("Submitted to Client?", "profile_submitted_to_client"), ("Client Submission Date", "client_submission_date"),
-    ("Current Status", "current_status"), ("Duplicate Check", "duplicate_check"),
+    ("Interview Status", "current_status"), ("Duplicate Check", "duplicate_check"),
     ("Job Req ID", "job_req_id"), ("Recruiter Notes", "recruiter_notes"),
 ]
 TRACK_COLUMNS = [
@@ -67,7 +68,14 @@ def _sheet(wb, title, heading, columns, rows, first=False):
 
 
 def export_workbook(ctx: Ctx) -> bytes:
-    cands = cand_svc.list_candidates(ctx, limit=None)["items"]
+    cands = []
+    offset = 0
+    while True:
+        page = cand_svc.list_candidates(ctx, limit=200, offset=offset)
+        cands.extend(page["items"])
+        offset += len(page["items"])
+        if offset >= page["total"] or not page["items"]:
+            break
     interviews = int_svc.list_interviews(ctx)
     wb = Workbook()
     master = list(MASTER_COLUMNS) + ([("Vendor", "vendor")] if not ctx.vendor_id and any(c.get("vendor") for c in cands) else [])

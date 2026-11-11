@@ -1,19 +1,30 @@
 import { api, qs } from "../api.js";
 import { h, clear, card, pageHeader, field, select, optionsFor, applyErrors, toast, errorMessage, button, can, state, statusBadge, confirmBox, debounce } from "../ui.js";
 import { go } from "../router.js";
-import { openInterviewForm } from "./interview_form.js";
-import { offerLettersCard } from "./offer.js";
+import { offerLettersCard, offerReady } from "./offer.js";
 
 const SECTIONS = [
-  ["Basics", ["date_added", "recruiter", "full_name", "current_company", "current_location", "primary_skill_role"]],
+  ["Basics", ["date_added", "recruiter", "process", "full_name", "current_company", "current_location", "primary_skill_role"]],
   ["Compensation and availability", ["total_experience_years", "current_ctc_lakhs", "expected_ctc_lakhs", "official_notice_period", "earliest_joining_date", "how_soon_can_join", "existing_offer", "offer_details"]],
   ["Contact", ["email", "phone", "date_of_birth"]],
   ["Client", ["client", "job_req_id", "profile_submitted_to_client", "client_submission_date"]],
   ["Notes", ["recruiter_notes"]],
 ];
 
-function control(f, value) {
-  const common = { dataset: { name: f.key } };
+function control(f, value, jobs = [], clientName = "") {
+  const common = { dataset: { name: f.key }, required: f.flag === "Required" };
+  if (f.key === "job_req_id") {
+    const choices = jobs.filter((j) => (j.client || "").trim().toLowerCase() === (clientName || "").trim().toLowerCase());
+    const selectEl = h("select", common,
+      h("option", { value: "" }, choices.length ? "Select a job ID (optional)" : "No jobs for this client"),
+      choices.map((j) => {
+        const id = j.client_ref || j.job_id;
+        return h("option", { value: id }, `${id}${j.title ? " · " + j.title : ""}`);
+      }));
+    if (value && !choices.some((j) => (j.client_ref || j.job_id) === value)) selectEl.append(h("option", { value }, value));
+    selectEl.value = value ?? "";
+    return selectEl;
+  }
   if (f.type === "select") return select(optionsFor(f.list), value ?? "", common);
   if (f.type === "textarea") return h("textarea", { ...common, rows: 3, value: value ?? "" });
   const type = { number: "number", date: "date", email: "email" }[f.type] || "text";
@@ -24,6 +35,8 @@ export async function candidateFormPage(root, params) {
   const editing = Boolean(params.ref);
   const fields = new Map(state.meta.fields.map((f) => [f.key, f]));
   let record = editing ? await api.get(`/candidates/${params.ref}`) : null;
+  const jobResponse = await api.get("/jobs").catch(() => ({ items: [] }));
+  const jobs = jobResponse.items || [];
   const writable = can.write();
   const controls = {};
   const dupBox = h("div", { class: "notice warn", hidden: true, role: "status" });
@@ -31,10 +44,23 @@ export async function candidateFormPage(root, params) {
 
   const sections = SECTIONS.map(([title, keys]) => card(title, h("div", { class: "form-grid" }, keys.filter((k) => fields.has(k)).map((k) => {
     const f = fields.get(k);
-    controls[k] = control(f, record ? record[k] : k === "date_added" ? state.meta.today : "");
+    const initial = record ? record[k] : k === "date_added" ? state.meta.today : k === "process" ? "Screening" : "";
+    controls[k] = control(f, initial, jobs, controls.client?.value || record?.client || "");
     if (!writable) controls[k].disabled = true;
     return h("div", { class: k === "recruiter_notes" || k === "offer_details" ? "span-2" : "" }, field(f.label, controls[k], { hint: f.hint, flag: f.flag }));
   }))));
+  if (controls.client && controls.job_req_id) {
+    controls.client.addEventListener("change", () => {
+      const previous = controls.job_req_id.value;
+      const next = control(fields.get("job_req_id"), "", jobs, controls.client.value);
+      const choices = jobs.filter((j) => (j.client || "").trim().toLowerCase() === controls.client.value.trim().toLowerCase());
+      if (choices.length === 1) next.value = choices[0].client_ref || choices[0].job_id;
+      else if (choices.some((j) => (j.client_ref || j.job_id) === previous)) next.value = previous;
+      if (!writable) next.disabled = true;
+      controls.job_req_id.replaceWith(next);
+      controls.job_req_id = next;
+    });
+  }
   const form = h("form", { class: "auth-form", novalidate: true }, sections, dupBox, h("div", { class: "actions sticky" },
     editing ? button("Back", () => history.back()) : button("Clear", () => go("/candidate/new?x=" + Date.now())), save));
 
@@ -61,7 +87,12 @@ export async function candidateFormPage(root, params) {
     for (const [k, el] of Object.entries(controls)) body[k] = el.value;
     try {
       if (editing) {
-        record = await api.patch(`/candidates/${record.candidate_id}`, { ...body, version: record.version });
+        Object.assign(record, await api.patch(`/candidates/${record.candidate_id}`, { ...body, version: record.version }));
+        letters?.refreshAvailability();
+        if (generateOffer) {
+          generateOffer.disabled = !offerReady(record);
+          generateOffer.title = offerReady(record) ? "Generate offer letter" : "Available when Process is HR Discussion and Interview Status is Yet to Offer";
+        }
         toast("Changes saved.", "success");
       } else {
         const created = await api.post("/candidates", body);
@@ -83,12 +114,18 @@ export async function candidateFormPage(root, params) {
     save.disabled = !writable;
   });
 
-  const badge = editing ? h("span", null, statusBadge(record.current_status)) : null;
+  const badge = editing ? h("span", null, "Interview status: ", statusBadge(record.current_status)) : null;
   let letters = null;
+  const generateOffer = editing && can.owner() && !can.vendor() ? button("Generate offer letter", () => letters?.generate(), "primary") : null;
+  if (generateOffer) {
+    generateOffer.disabled = !offerReady(record);
+    generateOffer.title = offerReady(record) ? "Generate offer letter" : "Available when Process is HR Discussion and Interview Status is Yet to Offer";
+  }
   root.append(pageHeader(editing ? `${record.candidate_id} - ${record.full_name}` : "Add candidate",
     editing ? "Edit details, then review the interview history below." : "Fill in what you know. Required fields are marked with *.",
     badge,
-    editing && writable ? button ("Generate offer letter", () => letters?.generate()) : null,
+    generateOffer,
+    editing && can.owner() && !can.vendor() ? button ("Generate offer letter", () => letters?.generate()) : null,
     editing && can.admin() ? button("Delete", async () => {
       if (!await confirmBox("Delete candidate", `Delete ${record.full_name}? They disappear from every list; the record is kept for audit.`, "Delete", true)) return;
       try { await api.del(`/candidates/${record.candidate_id}`); toast("Candidate deleted.", "success"); go("/candidates"); } catch (e) { toast(errorMessage(e), "error"); }
@@ -99,17 +136,12 @@ export async function candidateFormPage(root, params) {
     const history_ = h("div");
     const drawHistory = async () => {
       const rows = await api.get("/interviews" + qs({ candidate_id: record.candidate_id }));
-      clear(history_).append(rows.length ? h("ol", { class: "timeline" }, rows.slice().reverse().map((r) => h("li", null,
-        h("div", null, statusBadge(r.status), h("strong", null, `${r.interview_stage || "Interview"}`), h("small", { class: "muted" }, ` ${r.interview_date || r.created_at}`)),
-        r.feedback ? h("p", null, r.feedback) : null,
-        r.next_action ? h("p", { class: "muted" }, `Next: ${r.next_action}${r.next_followup_date ? " by " + r.next_followup_date : ""}`) : null))) 
+      clear(history_).append(rows.length ? h("ol", { class: "timeline" }, rows.slice().sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || ""))).map((r) => h("li", null,
+        h("div", null, statusBadge(r.status), h("small", { class: "muted" }, ` Changed ${r.created_at || "date unavailable"}`))))) 
         : h("p", { class: "muted" }, "No interviews recorded yet."));
     };
     await drawHistory();
-    root.append(card("Interview history", writable ? h("div", { class: "card-actions" }, button("Add interview entry", () => openInterviewForm({
-      candidate_id: record.candidate_id,
-      onSaved: async () => { record = await api.get(`/candidates/${record.candidate_id}`); clear(badge).append(statusBadge(record.current_status)); await drawHistory(); toast(`Status is now ${record.current_status}.`, "info"); },
-    }), "primary")) : null, history_));
+    root.append(card("Interview history", history_));
     if (writable) {
       letters = offerLettersCard(record);
       root.append(letters.node);

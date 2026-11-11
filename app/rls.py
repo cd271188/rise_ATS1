@@ -37,7 +37,7 @@ def role_problem(engine) -> str | None:
                                   AND p.policyname = 'tenant_isolation'
             WHERE c.oid IS NULL OR NOT c.relrowsecurity OR p.policyname IS NULL
             ORDER BY t.table_name LIMIT 1
-        """)).{"tables": list(PROTECTED_TABLES)}).scalar()
+        """), {"tables": list(PROTECTED_TABLES)}).scalar()
         if missing:
             return (f"row-level security is missing or disabled for table '{missing}'; "
                     "run 'alembic upgrade head' as the schema owner")

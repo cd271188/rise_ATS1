@@ -33,15 +33,18 @@ def upgrade():
             op.add_column(table, sa.Column("embedding_vector", EmbeddingVector(384), nullable=True))
     if bind.dialect.name == "postgresql":
         # Existing releases stored normalized float32 bytes. Convert those in-place so rollout keeps CVs indexed.
-        for table in ("candidate_profiles", "jobs"):
-            rows = bind.execute(sa.text(f"SELECT id, embedding FROM {table} WHERE embedding IS NOT NULL")).all()
+        for table, key_column in (("candidate_profiles", "candidate_id"), ("jobs", "id")):
+            rows = bind.execute(sa.text(
+                f"SELECT {key_column}, embedding FROM {table} WHERE embedding IS NOT NULL"
+            )).all()
             for row_id, raw in rows:
                 if raw is None or len(raw) != 384 * 4:
                     continue
                 vals = __import__("numpy").frombuffer(raw, dtype="<f4")
                 literal = "[" + ",".join(format(float(v), ".9g") for v in vals) + "]"
-                bind.execute(sa.text(f"UPDATE {table} SET embedding_vector = CAST(:v AS vector) WHERE id = :id"),
-                             {"v": literal, "id": row_id})
+                bind.execute(sa.text(
+                    f"UPDATE {table} SET embedding_vector = CAST(:v AS vector) WHERE {key_column} = :id"
+                ), {"v": literal, "id": row_id})
         # HNSW accelerates cosine distance scans. Keep NULL/unindexed rows out of the index.
         op.execute("CREATE INDEX IF NOT EXISTS ix_candidate_profiles_embedding_hnsw ON candidate_profiles USING hnsw (embedding_vector vector_cosine_ops) WHERE embedding_vector IS NOT NULL")
         op.execute("CREATE INDEX IF NOT EXISTS ix_jobs_embedding_hnsw ON jobs USING hnsw (embedding_vector vector_cosine_ops) WHERE embedding_vector IS NOT NULL")

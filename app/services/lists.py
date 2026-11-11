@@ -1,7 +1,7 @@
 """Per-organisation dropdown lists."""
 from sqlalchemy import delete, select
 
-from ..fields import SEED_LISTS, STATUSES
+from ..fields import INTERVIEW_STATUSES, PROCESSES, SEED_LISTS
 from ..models import ListValue
 from . import audit
 from .common import Ctx, Forbidden, ValidationError
@@ -50,8 +50,10 @@ def put_lists(ctx: Ctx, data: dict) -> dict:
             if v and v.lower() not in seen and len(v) <= 100:
                 seen.add(v.lower())
                 vals.append(v)
-        if name == "status" and vals != STATUSES:
-            raise ValidationError({"status": "the nine statuses are fixed"})
+        if name == "status" and vals != INTERVIEW_STATUSES:
+            raise ValidationError({"status": "the interview statuses are fixed"})
+        if name == "process" and vals != PROCESSES:
+            raise ValidationError({"process": "the process stages are fixed"})
         cleaned[name] = vals
     for name, vals in cleaned.items():
         ctx.db.execute(delete(ListValue).where(ListValue.org_id == ctx.org_id, ListValue.list_name == name))

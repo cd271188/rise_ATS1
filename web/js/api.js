@@ -78,6 +78,12 @@ export const api = {
     a.remove();
     URL.revokeObjectURL(url);
   },
+  async getBlob(path) {
+    let res = await send("GET", path);
+    if (res.status === 401 && (await refreshSession())) res = await send("GET", path);
+    if (!res.ok) throw new ApiError(res.status, await res.json().catch(() => ({})), res.headers.get("Retry-After"));
+    return res.blob();
+  },
   async login(email, password) {
     return adopt(await request("POST", "/auth/login", { email, password }));
   },

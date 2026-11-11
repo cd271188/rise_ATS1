@@ -3,9 +3,9 @@ import { api, qs } from "../api.js";
 import { h, clear, card, pageHeader, table, field, modal, button, applyErrors, toast, errorMessage, confirmBox, can } from "../ui.js";
 import { go } from "../router.js";
 
-export const MAX_TEMPLATE = 2 * 1024 * 1024;
 export const STATUS = { draft: "Draft", in_review: "In review", changes_requested: "Changes requested", active: "Accepted", superseded: "Replaced" };
-const EVENT = { created: "Started", saved: "Compensation saved", template: "Template uploaded", sent: "Sent for review", accepted: "Accepted", feedback: "Feedback", note: "Note" };
+const MAX_TEMPLATE_BYTES = 10 * 1024 * 1024;
+const EVENT = { created: "Started", saved: "Compensation saved", template: "Template saved", sent: "Sent for review", accepted: "Accepted", feedback: "Feedback", note: "Note" };
 const KIND = { earning: "Earning", employer: "Employer cost", deduction: "Deduction" };
 const GROUPS = [
   ["automatic", "Filled in automatically from the portal"],
@@ -28,10 +28,11 @@ export function componentTable(components) {
 }
 
 export function breakup(p) {
-  const rows = p.rows.map((r) => h("tr", null, h("td", null, r.label), h("td", null, KIND[r.kind] || r.kind), h("td", { class: "num" }, r.annual_text), h("td", { class: "num" }, r.monthly_text)));
-  rows.push(h("tr", null, h("td", null, h("strong", null, "Gross (earnings)")), h("td", null, ""), h("td", { class: "num" }, h("strong", null, p.gross_text)), h("td", { class: "num" }, h("strong", null, p.gross_monthly_text))));
-  rows.push(h("tr", null, h("td", null, h("strong", null, "Annual CTC")), h("td", null, ""), h("td", { class: "num" }, h("strong", null, p.ctc_text)), h("td", { class: "num" }, h("strong", null, p.ctc_monthly))));
-  return h("div", null, table(["Component", "Type", "Per year (INR)", "Per month (INR)"], rows),
+  const rows = p.rows.map((r) => h("tr", null,
+    h("td", null, r.kind === "total" ? h("strong", null, r.label) : r.label),
+    h("td", { class: "num" }, r.kind === "total" ? h("strong", null, r.annual_text) : r.annual_text),
+    h("td", { class: "num" }, r.kind === "total" ? h("strong", null, r.monthly_text) : r.monthly_text)));
+  return h("div", null, table(["Particulars", "Annual Amount (INR)", "Monthly Amount (INR)"], rows),
     p.unallocated ? h("p", { class: "notice warn" }, `INR ${p.unallocated_text} of the CTC is not allocated to any component.`) : null);
 }
 
@@ -53,24 +54,177 @@ export function eventsList(events) {
     e.note && e.kind !== "saved" ? h("p", null, e.note) : null)));
 }
 
-// A button that opens a file picker for the letter template and sends the chosen file to `path`.
-export function uploadButton(path, text, onDone) {
+function escapeEditorText(value) {
+  return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\"/g, "&quot;");
+}
+
+function editorHtml(text, components = []) {
+  const lines = String(text || "").split(/\r?\n/);
+  const blocks = [];
+  const annexureHeading = (line) => /ANNEXURE\s+A/i.test(line) && /ANNUAL\s+COMPENSATION\s+STRUCTURE/i.test(line);
+  let annexureInserted = false;
+  for (let i = 0; i < lines.length;) {
+    if (components.length && annexureHeading(lines[i])) {
+      blocks.push(compensationAnnexure(components));
+      annexureInserted = true;
+      i += 1;
+      while (i < lines.length && !lines[i].trim()) i += 1;
+      if (i < lines.length && lines[i].includes("|")) {
+        while (i < lines.length && (lines[i].includes("|") || !lines[i].trim())) i += 1;
+      }
+      continue;
+    }
+    if (lines[i].includes("|")) {
+      const rows = [];
+      while (i < lines.length && lines[i].includes("|")) {
+        rows.push(lines[i++].split("|").map((cell) => `<td>${escapeEditorText(cell.trim())}</td>`).join(""));
+      }
+      blocks.push(`<table><tbody>${rows.map((row) => `<tr>${row}</tr>`).join("")}</tbody></table>`);
+    } else {
+      blocks.push(`<p>${lines[i] ? escapeEditorText(lines[i]) : "<br>"}</p>`);
+      i += 1;
+    }
+  }
+  if (components.length && !annexureInserted) blocks.push(compensationAnnexure(components));
+  return blocks.join("") || "<p><br></p>";
+}
+
+function compensationAnnexure(components = []) {
+  const esc = escapeEditorText;
+  const priority = { basic: 0, hra: 1, special: 2, employer_pf: 0, gratuity: 1 };
+  const ordered = [...components].sort((a, b) => {
+    const group = { earning: 0, employer: 1, deduction: 2 };
+    return (group[a.kind] ?? 3) - (group[b.kind] ?? 3) || (priority[a.key] ?? 10) - (priority[b.key] ?? 10) || a.key.localeCompare(b.key);
+  });
+  const earnings = ordered.filter((c) => c.kind === "earning");
+  const employerCosts = ordered.filter((c) => c.kind === "employer");
+  const deductions = ordered.filter((c) => c.kind === "deduction");
+  const componentRow = (c) => `<tr><td>${esc(c.label)}</td><td>{{${esc(c.key)}_annual}}</td><td>{{${esc(c.key)}_monthly}}</td></tr>`;
+  const rows = earnings.map(componentRow);
+  rows.push("<tr><th>Gross Salary</th><th>{{gross_annual}}</th><th>{{gross_monthly}}</th></tr>");
+  rows.push(...employerCosts.map(componentRow), ...deductions.map(componentRow));
+  rows.push("<tr><th>Total Annual CTC</th><th>{{ctc_annual}}</th><th>{{ctc_monthly}}</th></tr>");
+  return `<h2>ANNEXURE A — ANNUAL COMPENSATION STRUCTURE</h2><table><thead><tr><th>Particulars</th><th>Annual Amount (INR)</th><th>Monthly Amount (INR)</th></tr></thead><tbody>${rows.join("")}</tbody></table><p><br></p>`;
+}
+
+export function uploadSampleButton(path, onDone, label = "Upload offer letter sample", onBusy = () => {}) {
   const input = h("input", { type: "file", accept: ".docx,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document", hidden: true });
+  const upload = button(label, () => input.click());
+  const status = h("small", { class: "muted", role: "status" });
   input.addEventListener("change", async () => {
     const file = input.files[0];
-    input.value = "";
-    if (!file) return;
-    if (file.size > MAX_TEMPLATE) { toast("The template must be smaller than 2 MB.", "error"); return; }
+    if (!file) { input.value = ""; status.textContent = "No file selected."; return; }
+    if (file.size > MAX_TEMPLATE_BYTES) { input.value = ""; status.textContent = "Upload failed: sample must be smaller than 10 MB."; toast(status.textContent, "error"); return; }
+    status.textContent = `Selected ${file.name}. Preparing upload…`;
+    upload.disabled = true;
+    upload.textContent = "Uploading…";
+    onBusy(true);
+    let updated;
     try {
-      const state = await api.putFile(path + "?filename=" + encodeURIComponent(file.name), await file.arrayBuffer());
-      toast("Template uploaded.", "success");
-      await onDone(state);
-    } catch (e) { toast(e.errors?.template || errorMessage(e), "error"); }
+      const bytes = await file.arrayBuffer();
+      status.textContent = `Uploading ${file.name}…`;
+      updated = await api.putFile(path + "?filename=" + encodeURIComponent(file.name), bytes);
+    } catch (e) {
+      status.textContent = "Upload failed: " + (e.errors?.template || errorMessage(e));
+      toast(status.textContent, "error");
+    }
+    finally {
+      input.value = "";
+      upload.disabled = false;
+      upload.textContent = label;
+      onBusy(false);
+    }
+    if (!updated) return;
+    status.textContent = `Uploaded ${file.name}.`;
+    toast(label.startsWith("Upload revised") ? "Revised offer letter sample saved." : "Offer letter sample saved for review.", "success");
+    try { await onDone(updated); }
+    catch (e) {
+      status.textContent = "Uploaded, but the page could not refresh: " + errorMessage(e);
+      toast(status.textContent, "warn", 8000);
+    }
   });
-  return h("span", null, button(text, () => input.click()), input);
+  return h("span", { class: "upload-sample-control" }, upload, input, status);
+}
+
+export function templateEditorButton(path, current, onDone) {
+  const initial = typeof current === "function" ? current() : current;
+  return button(initial?.has_template ? "Edit offer letter draft" : "Create offer letter draft", () => {
+    const state = typeof current === "function" ? current() : current;
+    const name = h("input", { type: "text", maxlength: 120, value: state?.template_name?.replace(/\.(pdf|docx)$/i, "") || "offer-letter", placeholder: "Offer letter name" });
+    const content = h("div", { class: "offer-rich-editor", contenteditable: "true", role: "textbox", "aria-label": "Offer letter content", "aria-multiline": "true" });
+    const editableComponents = (state?.components || []).filter((c) => c.key?.trim() && c.label?.trim());
+    content.innerHTML = editorHtml(state?.template_text || "", editableComponents);
+    const tool = (label, title, action) => {
+      const b = button(label, () => { content.focus(); action(); });
+      b.title = title;
+      b.addEventListener("mousedown", (event) => event.preventDefault());
+      return b;
+    };
+    const selectedCell = () => {
+      const selection = window.getSelection();
+      let node = selection?.anchorNode;
+      if (node?.nodeType === Node.TEXT_NODE) node = node.parentElement;
+      return node?.closest?.("td, th") || null;
+    };
+    const addTablePart = (part) => {
+      const cell = selectedCell();
+      const table = cell?.closest("table");
+      if (!table) { toast("Place the cursor in a table first.", "warn"); return; }
+      const row = cell.closest("tr");
+      if (part === "row") {
+        const next = table.ownerDocument.createElement("tr");
+        [...row.cells].forEach(() => {
+          const fresh = table.ownerDocument.createElement("td");
+          fresh.innerHTML = "<br>";
+          next.append(fresh);
+        });
+        row.after(next);
+        return;
+      }
+      const index = cell.cellIndex;
+      table.querySelectorAll("tr").forEach((tableRow) => {
+        const existing = tableRow.cells[index];
+        const fresh = table.ownerDocument.createElement(existing?.tagName.toLowerCase() || "td");
+        fresh.innerHTML = "<br>";
+        existing ? existing.after(fresh) : tableRow.append(fresh);
+      });
+    };
+    const toolbar = h("div", { class: "offer-editor-toolbar", role: "toolbar", "aria-label": "Offer letter formatting" },
+      tool("B", "Bold", () => document.execCommand("bold")),
+      tool("I", "Italic", () => document.execCommand("italic")),
+      tool("U", "Underline", () => document.execCommand("underline")),
+      tool("H2", "Heading", () => document.execCommand("formatBlock", false, "h2")),
+      tool("• List", "Bulleted list", () => document.execCommand("insertUnorderedList")),
+      tool("Insert table", "Insert a table", () => document.execCommand("insertHTML", false, "<table><tbody><tr><th>Col 1</th><th>Col 2</th><th>Col 3</th></tr><tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr></tbody></table><p><br></p>")),
+      tool("Add row", "Add a row to the current table", () => addTablePart("row")),
+      tool("Add column", "Add a column to the current table", () => addTablePart("column")));
+    const save = h("button", { class: "btn primary", type: "button" }, "Save offer letter");
+    const body = h("div", { class: "stack" },
+      state?.template_kind === "pdf" ? h("p", { class: "notice warn" }, "Text was extracted from this PDF sample. Saving it converts the letter to an editable Word template; PDF layout and styling may change. Scanned PDFs without selectable text cannot be converted.") : null,
+      state?.template_text ? h("p", { class: "notice" }, "Likely candidate fields are shown as placeholders. Review each suggestion before saving.") : null,
+      field("Offer letter name", name), h("label", { class: "field-label" }, "Offer letter content"), toolbar, content,
+      h("p", { class: "muted" }, "Use {{field_name}} for values filled automatically or requested when an offer is generated. Annexure A is populated from the compensation particulars above; review it before saving."),
+      h("div", { class: "actions" }, button("Cancel", () => m.close()), save));
+    const m = modal("Offer letter draft editor", body, { wide: true });
+    save.addEventListener("click", async () => {
+      save.disabled = true;
+      try {
+        if (content.innerText.length > 30000) throw new Error("Keep the offer letter under 30,000 characters.");
+        const state = await api.put(path, { filename: name.value, content: content.innerHTML });
+        m.close();
+        toast("Offer letter draft saved.", "success");
+        await onDone(state);
+      } catch (e) {
+        const why = e.errors?.content || errorMessage(e);
+        toast(why, "error");
+        save.disabled = false;
+      }
+    });
+  });
 }
 
 export const withExt = (name, kind) => (name.toLowerCase().endsWith("." + kind) ? name : name + "." + kind);
+export const offerReady = (candidate) => candidate?.process === "HR Discussion" && candidate?.current_status === "Yet to Offer";
 
 // ---------------------------------------------------------------- the owner's page
 export async function offerPage(root) {
@@ -111,7 +265,7 @@ export async function offerPage(root) {
       case "draft": return "Rise Consulting is preparing this. You will be asked to review it when it is ready." + other;
       case "in_review": return (owner ? "Please read the letter and the compensation below, then accept it or send your feedback." : "Waiting for the company owner to accept it.") + other;
       case "changes_requested": return "The feedback has gone to Rise Consulting, who will send a corrected version." + other;
-      default: return "Accepted. Owners, admins, recruiters and vendors can now make offer letters from a candidate's page. Only Rise Consulting can change this; leave a note if something needs to change.";
+      default: return "Accepted. The company owner can generate offer letters from a candidate's page. Recruiters and vendor users can download generated letters. Only Rise Consulting can change this set-up; leave a note if something needs to change.";
     }
   }
 
@@ -120,9 +274,8 @@ export async function offerPage(root) {
     const canUpload = owner && (!cur || ["draft", "changes_requested"].includes(cur.status));
     if (!cur) {
       return [card("Offer letter",
-        h("p", null, "Upload your company's offer letter as a Word (.docx) or text-based PDF file. Write each detail that changes from one letter to the next as a {{placeholder}}, for example {{candidate_name}}, {{joining_date}} or {{basic_annual}}."),
-        h("p", { class: "muted" }, "Rise Consulting will then set up the compensation structure behind the placeholders and send it to you to review."),
-        owner ? uploadButton("/offer-structure/template", "Upload offer letter", draw) : h("p", { class: "muted" }, "The company owner has not uploaded an offer letter yet."))];
+        h("p", null, "Upload a sample offer letter or create a template in the editor. Replace sample-specific candidate details with placeholders such as {{candidate_name}}, {{designation}}, and {{ctc_annual}}. Rise Consulting will set up compensation fields and send the draft back for your review and approval."),
+      owner ? h("div", { class: "card-actions" }, uploadSampleButton("/offer-structure/template", draw), templateEditorButton("/offer-structure/template/text", cur, draw)) : h("p", { class: "muted" }, "The company owner has not provided an offer letter sample yet."))];
     }
     const out = [card(`Offer letter set-up · version ${cur.version}`,
       h("div", null, statusBadge(cur.status)),
@@ -137,10 +290,11 @@ export async function offerPage(root) {
         owner && cur.status !== "in_review" ? button("Leave a note for Rise", () => feedbackDialog(true)) : null))];
 
     out.push(card("Letter template",
-      cur.has_template ? h("div", null, h("strong", null, cur.template_name), " ", h("small", { class: "muted" }, cur.template_kind === "pdf" ? "PDF" : "Word"),
-        h("div", { class: "card-actions" }, button("Download", () => api.download("/offer-structure/template", withExt(cur.template_name, cur.template_kind)).catch((e) => toast(errorMessage(e), "error"))),
-          canUpload ? uploadButton("/offer-structure/template", "Replace template", draw) : null)) :
-        h("div", null, h("p", { class: "muted" }, "No template yet."), canUpload ? uploadButton("/offer-structure/template", "Upload offer letter", draw) : null),
+      cur.has_template ? h("div", null, h("strong", null, cur.template_name), " ", h("small", { class: "muted" }, cur.template_kind === "docx" ? "Word template" : "PDF template"),
+        h("div", { class: "card-actions" }, button("Download draft for review", () => api.download("/offer-structure/template", withExt(cur.template_name, cur.template_kind)).catch((e) => toast(errorMessage(e), "error"))),
+          canUpload ? uploadSampleButton("/offer-structure/template", draw) : null,
+          canUpload ? templateEditorButton("/offer-structure/template/text", cur, draw) : null)) :
+        h("div", null, h("p", { class: "muted" }, "No template yet."), canUpload ? h("div", { class: "card-actions" }, uploadSampleButton("/offer-structure/template", draw), templateEditorButton("/offer-structure/template/text", cur, draw)) : null),
       cur.has_template ? placeholderSummary(cur.placeholders) : null));
 
     const sample = h("input", { type: "text", inputmode: "numeric", placeholder: "e.g. 1200000", value: ctc, "aria-label": "Annual CTC to try" });
@@ -160,7 +314,7 @@ export async function offerPage(root) {
     clear(holder).append(...view(st));
   }
 
-  root.append(pageHeader("Offer letter", "Your offer letter template and the compensation structure Rise Consulting has set up for it."), holder);
+  root.append(pageHeader("Offer letter", "Create your letter template, then review the compensation structure Rise Consulting prepares for it."), holder);
   await draw();
 }
 
@@ -226,16 +380,31 @@ export async function generateOfferDialog(record, onDone) {
 // The "Offer letters" card on a candidate. Returns { node, generate } so the page header can open the same dialog.
 export function offerLettersCard(record) {
   const list = h("div");
+  const downloads = [];
+  const make = button("Generate offer letter", () => generate(), "primary");
+  const refreshAvailability = () => {
+    const ready = offerReady(record);
+    make.disabled = !ready;
+    make.title = ready ? "Generate offer letter" : "Available when Process is HR Discussion and Interview Status is Yet to Offer";
+    downloads.forEach((download) => { download.disabled = !ready; download.title = make.title; });
+  };
   const draw = async () => {
     try {
       const rows = await api.get(`/candidates/${record.candidate_id}/offer-letters`);
-      clear(list).append(table(["Made on", "Made by", "Set-up version", ""], rows.map((r) => h("tr", null,
-        h("td", null, r.created_at), h("td", null, r.generated_by || ""), h("td", null, "v" + r.version),
-        h("td", { class: "row-actions" }, button("Download PDF", () => api.download(`/offer-letters/${r.id}/pdf`, r.filename).catch((e) => toast(errorMessage(e), "error"))))))));
+      downloads.length = 0;
+      const rowsEl = rows.map((r) => {
+        const download = button("Download PDF", () => api.download(`/offer-letters/${r.id}/pdf`, r.filename).catch((e) => toast(errorMessage(e), "error")));
+        downloads.push(download);
+        return h("tr", null, h("td", null, r.created_at), h("td", null, r.generated_by || ""), h("td", null, "v" + r.version),
+          h("td", { class: "row-actions" }, download));
+      });
+      clear(list).append(table(["Made on", "Made by", "Set-up version", ""], rowsEl));
+      refreshAvailability();
     } catch (e) { clear(list).append(h("p", { class: "muted" }, errorMessage(e))); }
   };
   const generate = () => generateOfferDialog(record, draw);
-  const node = card("Offer letters", h("div", { class: "card-actions" }, button("Generate offer letter", generate, "primary")), list);
+  refreshAvailability();
+  const node = card("Offer letters", can.owner() && !can.vendor() ? h("div", { class: "card-actions" }, make) : null, list);
   draw();
-  return { node, generate };
+  return { node, generate, refreshAvailability };
 }
