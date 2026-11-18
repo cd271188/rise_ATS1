@@ -20,6 +20,7 @@ PERIODS = ("monthly", "annual")
 SYSTEM_FIELDS = ("candidate_name", "candidate_email", "candidate_phone", "candidate_id", "client",
                  "job_req_id", "job_title", "company_name", "offer_date")
 MANUAL_FIELDS = {"designation", "band_or_grade", "department", "joining_date", "city", "state", "location"}
+CUSTOM_COMPONENT_HINT = re.compile(r"(?:_annual$|_monthly$|bonus|allowance|provident|(?:^|_)pf(?:_|$)|gratuity|deduction|insurance|commission|reimbursement|stock|equity|benefit|salary|wage|medical|travel)")
 TOTALS = ("ctc_annual", "ctc_monthly", "gross_annual", "gross_monthly")
 RESERVED = set(SYSTEM_FIELDS) | {"ctc", "gross"}
 WORKING = ("draft", "in_review", "changes_requested")
@@ -191,20 +192,46 @@ def compensation_values(calc: dict) -> dict:
 # ---------------------------------------------------------------- placeholders
 def classify(names: list[str], components: list[dict]) -> dict:
     comp = set(TOTALS) | {"ctc"}
+    comp_keys = set()
     for c in components:
+        comp_keys.add(c["key"])
         comp |= {c["key"] + "_annual", c["key"] + "_monthly"}
-    out = {"automatic": [], "compensation": [], "asked": [], "unknown": []}
+    out = {"automatic": [], "compensation": [], "asked": [], "unknown": [], "unmapped_custom_tags": []}
     for n in names:
         if n in SYSTEM_FIELDS:
             out["automatic"].append(n)
-        elif n in comp:
+        elif n in comp or n in comp_keys:
             out["compensation"].append(n)
         elif n in MANUAL_FIELDS:
             out["asked"].append(n)
-        elif n.endswith(("_annual", "_monthly")):
-            out["unknown"].append(n)
         else:
             out["asked"].append(n)
+            if CUSTOM_COMPONENT_HINT.search(n):
+                out["unmapped_custom_tags"].append(n)
+    return out
+
+
+def _mapped_tag(name: str, mappings: dict) -> str:
+    target = mappings.get(name)
+    if not target:
+        return name
+    suffix = "_monthly" if name.endswith("_monthly") else "_annual"
+    return target + suffix
+
+
+def clean_tag_mappings(raw, components: list[dict]) -> dict[str, str]:
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict) or len(raw) > 100:
+        raise ValidationError({"tag_mappings": "give a mapping of at most 100 template tags"})
+    keys = {component["key"] for component in components}
+    out = {}
+    for source, target in raw.items():
+        tag = offer_docs.normalize_tag(source)
+        component = offer_docs.sanitize_tag(target)
+        if not tag or component not in keys:
+            raise ValidationError({"tag_mappings": f"the mapping for '{source}' must target an existing compensation component"})
+        out[tag] = component
     return out
 
 
@@ -213,14 +240,23 @@ def _label(name: str) -> str:
 
 
 def _analysis(s: OfferStructure) -> dict:
-    empty = {"automatic": [], "compensation": [], "asked": [], "unknown": [], "malformed": [], "error": None}
+    empty = {"automatic": [], "compensation": [], "asked": [], "unknown": [],
+             "unmapped_custom_tags": [], "malformed": [], "has_compensation_rows": False, "error": None}
     if not s.template_file:
         return empty
     try:
         info = offer_docs.placeholders(s.template_kind, s.template_file)
     except ValueError as e:
         return {**empty, "error": str(e)}
-    return {**classify(info["names"], s.components or []), "malformed": info["malformed"], "error": None}
+    mappings = s.tag_mappings or {}
+    names = [_mapped_tag(name, mappings) for name in info["names"]]
+    return {**classify(names, s.components or []), "tag_mappings": mappings,
+            "malformed": info["malformed"],
+            "has_compensation_rows": info.get("has_compensation_rows", False), "error": None}
+
+
+def _refresh_custom_tags(s: OfferStructure) -> None:
+    s.unmapped_custom_tags = _analysis(s)["unmapped_custom_tags"]
 
 
 # ---------------------------------------------------------------- structure lookup and views
@@ -246,6 +282,7 @@ def _view(s: OfferStructure, ctc: int | None = None) -> dict:
             preview_error = next(iter(e.errors.values()))
     return {"id": s.id, "version": s.version, "status": s.status, "template_name": s.template_name,
             "template_kind": s.template_kind, "has_template": bool(s.template_file), "components": comps,
+            "unmapped_custom_tags": _analysis(s)["unmapped_custom_tags"], "tag_mappings": s.tag_mappings or {},
             "template_text": offer_docs.template_text(s.template_kind, s.template_file) if s.template_file else "",
             "events": s.events or [], "placeholders": _analysis(s), "preview": preview, "preview_error": preview_error,
             "sent_at": s.sent_at.strftime("%Y-%m-%d %H:%M") if s.sent_at else None,
@@ -287,7 +324,8 @@ def _editable(ctx: Ctx, org: Organization, rise: bool) -> OfferStructure:
         raise Conflict("the accepted structure is locked; " + ("start a new version to change it" if rise
                                                                 else "ask Rise Consulting to change it"))
     top = ctx.db.scalar(select(func.max(OfferStructure.version)).where(OfferStructure.org_id == org.id)) or 0
-    s = OfferStructure(org_id=org.id, version=top + 1, status="draft", components=[], events=[], created_by=ctx.user.id)
+    s = OfferStructure(org_id=org.id, version=top + 1, status="draft", components=[],
+                       unmapped_custom_tags=[], tag_mappings={}, events=[], created_by=ctx.user.id)
     ctx.db.add(s)
     ctx.db.flush()
     _event(s, ctx, "created", rise=rise)
@@ -301,6 +339,7 @@ def _store_template(ctx: Ctx, s: OfferStructure, blob: bytes, filename: str, ris
         raise ValidationError({"template": str(e)})
     name = re.sub(r"[^A-Za-z0-9 .()-]", "", filename or "")[:120].strip() or "offer-letter." + kind
     s.template_file, s.template_kind, s.template_name = blob, kind, name
+    _refresh_custom_tags(s)
     _event(s, ctx, "template", name, rise)
 
 
@@ -321,6 +360,8 @@ def rise_save(ctx: Ctx, org_id: int, data: dict) -> dict:
     comps = clean_components(data.get("components"))
     s = _editable(ctx, org, True)
     s.components = comps
+    s.tag_mappings = clean_tag_mappings(data.get("tag_mappings", s.tag_mappings), comps)
+    _refresh_custom_tags(s)
     _event(s, ctx, "saved", f"{len(comps)} components", True)
     _audit_rise(ctx, org, "offer.structure_save", s)
     ctx.db.commit()
@@ -345,6 +386,7 @@ def _store_text_template(ctx: Ctx, s: OfferStructure, content: str, filename: st
     name = re.sub(r"[^A-Za-z0-9 .()-]", "", filename or "")[:120].strip() or "offer-letter.docx"
     name = re.sub(r"\.(pdf|docx)$", "", name, flags=re.I) + ".docx"
     s.template_file, s.template_kind, s.template_name = blob, "docx", name
+    _refresh_custom_tags(s)
     _event(s, ctx, "template", name, rise)
 
 
@@ -400,6 +442,8 @@ def rise_new_version(ctx: Ctx, org_id: int) -> dict:
         raise Conflict("there is no accepted structure to copy")
     top = ctx.db.scalar(select(func.max(OfferStructure.version)).where(OfferStructure.org_id == org.id))
     s = OfferStructure(org_id=org.id, version=top + 1, status="draft", components=list(active.components or []),
+                       unmapped_custom_tags=list(active.unmapped_custom_tags or []),
+                       tag_mappings=dict(active.tag_mappings or {}),
                        template_name=active.template_name, template_kind=active.template_kind,
                        template_file=active.template_file, events=[], created_by=ctx.user.id)
     ctx.db.add(s)
@@ -440,6 +484,8 @@ def owner_save(ctx: Ctx, data: dict) -> dict:
     comps = clean_components(data.get("components"))
     s = _editable(ctx, org, False)
     s.components = comps
+    s.tag_mappings = clean_tag_mappings(data.get("tag_mappings", s.tag_mappings), comps)
+    _refresh_custom_tags(s)
     _event(s, ctx, "saved", f"{len(comps)} compensation components")
     audit.record(ctx, "offer.structure_save", "offer_structure", s.id, {"version": s.version, "components": len(comps)})
     ctx.db.commit()
@@ -455,6 +501,8 @@ def owner_new_version(ctx: Ctx) -> dict:
         raise Conflict("there is no approved offer setup to copy")
     top = ctx.db.scalar(select(func.max(OfferStructure.version)).where(OfferStructure.org_id == org.id)) or 0
     s = OfferStructure(org_id=org.id, version=top + 1, status="draft", components=list(active.components or []),
+                       unmapped_custom_tags=list(active.unmapped_custom_tags or []),
+                       tag_mappings=dict(active.tag_mappings or {}),
                        template_name=active.template_name, template_kind=active.template_kind,
                        template_file=active.template_file, events=[], created_by=ctx.user.id)
     ctx.db.add(s)
@@ -489,10 +537,17 @@ def owner_template_file(ctx: Ctx) -> tuple[bytes, str, str]:
 
 def owner_template_preview(ctx: Ctx) -> bytes:
     org = _own_org(ctx, False)
+    s = _working(ctx.db, org.id) or _active(ctx.db, org.id)
     blob, _name, kind = _template_of(ctx, org)
     try:
         tokens = offer_docs.placeholders(kind, blob)["names"]
         values = {name: f"[{_label(name)}]" for name in tokens}
+        if s and s.components:
+            sample = compute(s.components, _sample_ctc(s.components))
+            values["compensation_rows"] = [
+                {"component_name": row["label"], "annual_amount": row["annual_text"],
+                 "monthly_amount": row["monthly_text"]}
+                for row in sample["rows"] if row["kind"] != "total"]
         pdf, _engine = offer_docs.render(kind, blob, values)
         return pdf
     except ValueError as e:
@@ -529,7 +584,7 @@ def _validate_setup(s: OfferStructure) -> None:
             problems.append("add compensation components for: " + ", ".join(info["unknown"]))
         if "candidate_name" not in info["automatic"]:
             problems.append("include {{candidate_name}} in the template")
-        if not info["compensation"]:
+        if not info["compensation"] and not info["has_compensation_rows"]:
             problems.append("include a compensation placeholder such as {{ctc_annual}} in the template")
     if not s.components:
         problems.append("add at least one compensation component")
@@ -612,7 +667,7 @@ def letter_form(ctx: Ctx, ref) -> dict:
     s = _accepted(ctx)
     groups = _analysis(s)
     auto = _automatic(ctx, cand)
-    return {"version": s.version, "needs_ctc": bool(groups["compensation"]),
+    return {"version": s.version, "needs_ctc": bool(groups["compensation"] or groups["has_compensation_rows"]),
             "automatic": [{"name": n, "label": _label(n), "value": auto[n]} for n in groups["automatic"]],
             "inputs": [{"name": n, "label": _label(n)} for n in groups["asked"]]}
 
@@ -630,8 +685,18 @@ def _resolve(ctx: Ctx, s: OfferStructure, cand: Candidate, data: dict) -> dict:
         raise ValidationError({"offer": "the accepted template has problems; ask Rise Consulting to correct it"})
     auto = _automatic(ctx, cand)
     values = {n: auto[n] for n in groups["automatic"]}
-    if groups["compensation"]:
-        values.update(compensation_values(compute(s.components or [], parse_ctc(data.get("ctc")))))
+    if groups["compensation"] or groups["has_compensation_rows"]:
+        calc = compute(s.components or [], parse_ctc(data.get("ctc")))
+        computed = compensation_values(calc)
+        computed["compensation_rows"] = [
+            {"component_name": row["label"], "annual_amount": row["annual_text"],
+             "monthly_amount": row["monthly_text"]}
+            for row in calc["rows"] if row["kind"] != "total"]
+        values.update(computed)
+        component_keys = {c["key"] for c in (s.components or [])}
+        for n in groups["compensation"]:
+            if n in component_keys:
+                values[n] = computed.get(n + "_annual", "")
     given = data.get("inputs") if isinstance(data.get("inputs"), dict) else {}
     errors = {}
     for n in groups["asked"]:
@@ -643,6 +708,11 @@ def _resolve(ctx: Ctx, s: OfferStructure, cand: Candidate, data: dict) -> dict:
         values[n] = v
     if errors:
         raise ValidationError(errors)
+    if s.tag_mappings:
+        for source in offer_docs.placeholders(s.template_kind, s.template_file)["names"]:
+            target = _mapped_tag(source, s.tag_mappings)
+            if target != source:
+                values[source] = values.get(target, "")
     return values
 
 
