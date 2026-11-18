@@ -22,6 +22,8 @@ _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 _SOFFICE_LOCK = threading.Lock()
 
 _TAG_ALIASES = {
+    "name": "candidate_name", "full_name": "candidate_name", "candidate_full_name": "candidate_name",
+    "employee_name": "candidate_name", "employee_full_name": "candidate_name", "applicant_name": "candidate_name",
     "basic_salary": "basic", "basic_pay": "basic",
     "hra": "hra", "house_rent_allowance": "hra", "house_rent_allowance_hra": "hra",
     "special_allowance": "special", "balancing_allowance": "special",
