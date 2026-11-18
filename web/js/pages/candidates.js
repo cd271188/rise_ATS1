@@ -2,7 +2,6 @@ import { api, qs } from "../api.js";
 import { h, modal, pageHeader, button, guarded, can, state, toast, errorMessage, confirmBox, debounce } from "../ui.js";
 import { go } from "../router.js";
 import { createGrid } from "../grid.js";
-import { openInterviewForm } from "./interview_form.js";
 
 const WIDTHS = { candidate_id: 100, full_name: 190, textarea: 260, date: 130, number: 120, select: 150, email: 210 };
 
@@ -59,9 +58,6 @@ export async function candidatesPage(root, params) {
       return api.patch(`/candidates/${row.candidate_id}`, { [key]: value, version: row.version });
     },
     rowActions: (row) => [
-      h("span", { class: "icon-link", title: "Candidate details open from the ID or name" }, "↗"),
-      writable ? h("button", { class: "icon-link", type: "button", title: "Add interview entry", "aria-label": "Add interview entry",
-        onclick: () => openInterviewForm({ candidateId: row.candidate_id, onSaved: () => grid.reload() }) }, "📅") : null,
       can.admin() ? h("button", { class: "icon-link danger-text", type: "button", title: "Delete", "aria-label": "Delete " + row.candidate_id,
         onclick: async () => {
           if (!await confirmBox("Delete candidate", `Delete ${row.full_name}? They disappear from every list; the record is kept for audit.`, "Delete", true)) return;
