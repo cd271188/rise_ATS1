@@ -205,6 +205,9 @@ class OfferLetter(Base):
     values: Mapped[dict | None] = mapped_column(JSON)
     pdf: Mapped[bytes] = mapped_column(LargeBinary)
     pdf_engine: Mapped[str] = mapped_column(String(20), default="builtin")
+    approval_status: Mapped[str] = mapped_column(String(24), default="pending_approval", server_default="pending_approval")
+    approved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
 class CvDocument(Base):
