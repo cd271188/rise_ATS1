@@ -44,6 +44,8 @@ export function placeholderSummary(ph) {
   return h("div", { class: "stack" },
     any ? GROUPS.filter(([k]) => ph[k].length).map(([k, title]) => h("div", null, h("strong", null, title), h("div", null, names(ph[k])))) : h("p", { class: "muted" }, "No {{placeholders}} found in this file"),
     ph.unknown.length ? h("p", { class: "notice warn" }, "No compensation component matches: ", names(ph.unknown), ". Add that component, or fix the name in the letter.") : null,
+    ph.unmapped_custom_tags?.length ? h("p", { class: "notice warn" }, "Notice: Found unmapped custom tag(s): ", names(ph.unmapped_custom_tags), ". Add a matching compensation component below, or rename the tag to an existing compensation head. Generation remains available; unmatched values will be requested from the recruiter.") : null,
+    ph.has_compensation_rows ? h("p", { class: "notice" }, "A compensation breakdown table was detected. Its detail rows will be populated from the configured compensation components.") : null,
     ph.malformed.length ? h("p", { class: "notice warn" }, "A {{ }} is broken near: ", ph.malformed.map((m) => h("em", null, `${m}`))) : null);
 }
 
@@ -203,7 +205,7 @@ export function templateEditorButton(path, current, onDone) {
       state?.template_kind === "pdf" ? h("p", { class: "notice warn" }, "Text was extracted from this PDF sample. Saving it converts the letter to an editable Word template; PDF layout and styling may change. Scanned PDFs without selectable text cannot be converted.") : null,
       state?.template_text ? h("p", { class: "notice" }, "Likely candidate fields are shown as placeholders. Review each suggestion before saving.") : null,
       field("Offer letter name", name), h("label", { class: "field-label" }, "Offer letter content"), toolbar, content,
-      h("p", { class: "muted" }, "Use {{field_name}} for values filled automatically or requested when an offer is generated. Annexure A is populated from the compensation particulars above; review it before saving."),
+      h("p", { class: "muted" }, "Use {{field_name}} for values filled automatically or requested when an offer is generated. A table headed Component/Particulars, Annual, and Monthly is populated from compensation particulars; alternatively wrap one DOCX detail row with {#compensation_rows} and {/compensation_rows}, using {{component_name}}, {{annual_amount}}, and {{monthly_amount}} inside it."),
       h("div", { class: "actions" }, button("Cancel", () => m.close()), save));
     const m = modal("Offer letter draft editor", body, { wide: true });
     save.addEventListener("click", async () => {
