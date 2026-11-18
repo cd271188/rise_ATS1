@@ -123,7 +123,6 @@ export async function candidateFormPage(root, params) {
     editing ? "Edit details, then review the interview history below." : "Fill in what you know. Required fields are marked with *.",
     badge,
     generateOffer,
-    editing && can.owner() && !can.vendor() ? button ("Generate offer letter", () => letters?.generate()) : null,
     editing && can.admin() ? button("Delete", async () => {
       if (!await confirmBox("Delete candidate", `Delete ${record.full_name}? They disappear from every list; the record is kept for audit.`, "Delete", true)) return;
       try { await api.del(`/candidates/${record.candidate_id}`); toast("Candidate deleted.", "success"); go("/candidates"); } catch (e) { toast(errorMessage(e), "error"); }
