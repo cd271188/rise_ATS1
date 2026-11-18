@@ -133,3 +133,19 @@ def generate(ref: str, request: Request, data=Depends(json_body), ctx: Ctx = Dep
 def letter_pdf(letter_id: int, ctx: Ctx = Depends(get_ctx)):
     blob, name = svc.download(ctx, letter_id)
     return Response(blob, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@router.get("/offer-letters/{letter_id}/preview")
+def letter_preview_pdf(letter_id: int, ctx: Ctx = Depends(get_ctx)):
+    blob, name = svc.preview_letter(ctx, letter_id)
+    return Response(blob, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{name}"'})
+
+
+@router.get("/offer-letters/approval-queue")
+def approval_queue(ctx: Ctx = Depends(get_ctx)):
+    return svc.approval_queue(ctx)
+
+
+@router.post("/offer-letters/{letter_id}/approve")
+def approve_letter(letter_id: int, ctx: Ctx = Depends(get_ctx)):
+    return svc.approve_letter(ctx, letter_id)
