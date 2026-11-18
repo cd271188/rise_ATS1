@@ -12,12 +12,47 @@ from functools import lru_cache
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-PLACEHOLDER = re.compile(r"\{\{\s*([A-Za-z0-9_]+)\s*\}\}")
+PLACEHOLDER = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
+COMP_ROW_START = "{#compensation_rows}"
+COMP_ROW_END = "{/compensation_rows}"
 MAX_TEMPLATE_BYTES = 10 * 1024 * 1024
 MAX_UNZIPPED_BYTES = 30 * 1024 * 1024
 MAX_PDF_PAGES = 10
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 _SOFFICE_LOCK = threading.Lock()
+
+_TAG_ALIASES = {
+    "basic_salary": "basic", "basic_pay": "basic",
+    "hra": "hra", "house_rent_allowance": "hra", "house_rent_allowance_hra": "hra",
+    "special_allowance": "special", "balancing_allowance": "special",
+    "er_pf": "employer_pf", "employer_provident_fund": "employer_pf",
+    "employer_provident_fund_pf": "employer_pf",
+    "gratuity_provision": "gratuity",
+}
+_ANNUAL_COMPONENTS = {"basic", "hra", "special", "employer_pf", "gratuity"}
+
+
+def sanitize_tag(name: str) -> str:
+    """Normalize arbitrary human-written tag text to a safe snake_case key."""
+    text = str(name or "").strip().lower()
+    text = re.sub(r"[^a-z0-9]+", "_", text)
+    return re.sub(r"_+", "_", text).strip("_")
+
+
+def normalize_tag(name: str) -> str:
+    """Sanitize a tag and resolve common compensation aliases to canonical keys."""
+    tag = sanitize_tag(name)
+    period = ""
+    for suffix in ("_annual", "_monthly"):
+        if tag.endswith(suffix):
+            tag, period = tag[:-len(suffix)], suffix
+            break
+    canonical = _TAG_ALIASES.get(tag, tag)
+    if period:
+        return canonical + period
+    if canonical in _ANNUAL_COMPONENTS:
+        return canonical + "_annual"
+    return canonical
 
 
 # ---------------------------------------------------------------- detection and validation
@@ -305,18 +340,27 @@ def _clean(value) -> str:
 
 def _scan(texts) -> dict:
     names, bad = set(), []
+    texts = list(texts)
     for t in texts:
-        names.update(m.group(1) for m in PLACEHOLDER.finditer(t))
+        names.update(normalize_tag(m.group(1)) for m in PLACEHOLDER.finditer(t))
         rest = PLACEHOLDER.sub("", t)
         if "{{" in rest or "}}" in rest:
             bad.append(t.strip()[:80])
-    return {"names": sorted(names), "malformed": bad}
+    has_rows = any(COMP_ROW_START in t for t in texts) and any(COMP_ROW_END in t for t in texts)
+    if has_rows:
+        names -= {"component_name", "annual_amount", "monthly_amount"}
+    return {"names": sorted(names), "malformed": bad, "has_compensation_rows": has_rows}
 
 
 def placeholders(kind: str, blob: bytes) -> dict:
     """{'names': [...], 'malformed': [snippets of text with a broken {{ }}]}"""
     if kind == "docx":
-        return _scan(p.text for p in _docx_paragraphs(_open_docx(blob)))
+        doc = _open_docx(blob)
+        info = _scan(p.text for p in _docx_paragraphs(doc))
+        if any(any(_compensation_columns([cell.text for cell in row.cells]) is not None
+                   for row in table.rows) and len(table.rows) > 1 for table in _iter_tables(doc)):
+            info["has_compensation_rows"] = True
+        return info
     return _scan(_pdf_boxes(blob)[1])
 
 
@@ -350,9 +394,10 @@ def _fill_paragraph(p, values: dict) -> None:
         pos += len(t)
     new = texts[:]
     for m in reversed(matches):
-        if m.group(1) not in values:
+        key = normalize_tag(m.group(1))
+        if key not in values:
             continue
-        value, first = _clean(values[m.group(1)]), True
+        value, first = _clean(values[key]), True
         for i, (a, b) in enumerate(bounds):
             if b <= m.start() or a >= m.end():
                 continue
@@ -366,11 +411,95 @@ def _fill_paragraph(p, values: dict) -> None:
 
 def fill_docx(blob: bytes, values: dict) -> bytes:
     doc = _open_docx(blob)
+    _expand_compensation_rows(doc, values.get("compensation_rows") or [])
     for p in _docx_paragraphs(doc):
         _fill_paragraph(p, values)
     out = io.BytesIO()
     doc.save(out)
     return out.getvalue()
+
+
+def _iter_tables(container):
+    for table in container.tables:
+        yield table
+        for row in table.rows:
+            for cell in row.cells:
+                yield from _iter_tables(cell)
+
+
+def _compensation_columns(headers: list[str]) -> tuple[int, int, int] | None:
+    labels = [sanitize_tag(value) for value in headers]
+    component_col = next((i for i, label in enumerate(labels)
+                          if any(word in label for word in ("component", "particulars", "salary_head", "compensation_head", "pay_head"))), None)
+    annual_col = next((i for i, label in enumerate(labels) if "annual" in label), None)
+    monthly_col = next((i for i, label in enumerate(labels) if "monthly" in label), None)
+    return (component_col, annual_col, monthly_col) if None not in (component_col, annual_col, monthly_col) else None
+
+
+def _expand_compensation_rows(doc, items: list[dict]) -> None:
+    """Expand explicit loop rows or a recognizable Annexure A compensation table."""
+    from copy import deepcopy
+    from docx.table import _Row
+
+    for table in list(_iter_tables(doc)):
+        handled = False
+        for row in list(table.rows):
+            row_text = "\n".join(cell.text for cell in row.cells)
+            if COMP_ROW_START not in row_text or COMP_ROW_END not in row_text:
+                continue
+            template = deepcopy(row._tr)
+            parent = row._tr.getparent()
+            index = parent.index(row._tr)
+            parent.remove(row._tr)
+            for offset, item in enumerate(items):
+                clone = deepcopy(template)
+                cloned_row = _Row(clone, table)
+                for cell in cloned_row.cells:
+                    for paragraph in cell.paragraphs:
+                        text = paragraph.text
+                        if COMP_ROW_START in text or COMP_ROW_END in text:
+                            paragraph.text = text.replace(COMP_ROW_START, "").replace(COMP_ROW_END, "")
+                        _fill_paragraph(paragraph, item)
+                parent.insert(index + offset, clone)
+            handled = True
+        if not items or handled:
+            continue
+        _expand_detected_compensation_table(table, items, deepcopy)
+
+
+def _expand_detected_compensation_table(table, items: list[dict], deepcopy) -> None:
+    """Replace detail rows in tables with component/annual/monthly headings, keeping totals rows."""
+    rows = list(table.rows)
+    for header_index, header in enumerate(rows):
+        columns = _compensation_columns([cell.text for cell in header.cells])
+        if not columns:
+            continue
+        component_col, annual_col, monthly_col = columns
+        start = header_index + 1
+        if start >= len(rows):
+            continue
+        summary_words = ("gross", "total", "ctc", "net salary")
+        end = next((i for i in range(start, len(rows))
+                    if any(word in sanitize_tag(rows[i].cells[component_col].text) for word in summary_words)), len(rows))
+        if end <= start:
+            continue
+        template = deepcopy(rows[start]._tr)
+        parent = rows[start]._tr.getparent()
+        insertion_index = parent.index(rows[start]._tr)
+        for row in rows[start:end]:
+            parent.remove(row._tr)
+        from docx.table import _Row
+        for offset, item in enumerate(items):
+            clone = deepcopy(template)
+            cloned_row = _Row(clone, table)
+            values = {component_col: item.get("component_name", ""),
+                      annual_col: item.get("annual_amount", ""),
+                      monthly_col: item.get("monthly_amount", "")}
+            for column, value in values.items():
+                if column < len(cloned_row.cells):
+                    cloned_row.cells[column].text = str(value)
+            parent.insert(insertion_index + offset, clone)
+        return
 
 
 # ---------------------------------------------------------------- fonts
@@ -450,7 +579,7 @@ def _pdf_boxes(blob: bytes) -> tuple[list[dict], list[str]]:
                     if not own:
                         continue
                     first = own[0]
-                    boxes.append({"page": index, "name": m.group(1), "x0": min(o.x0 for o in own), "x1": max(o.x1 for o in own),
+                    boxes.append({"page": index, "name": normalize_tag(m.group(1)), "x0": min(o.x0 for o in own), "x1": max(o.x1 for o in own),
                                   "baseline": first.matrix[5], "size": float(first.size), "bold": "bold" in first.fontname.lower()})
     if not chars_seen:
         raise ValueError("this PDF has no selectable text (is it a scan?); upload a Word or text-based PDF")
