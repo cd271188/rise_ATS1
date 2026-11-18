@@ -182,6 +182,8 @@ class OfferStructure(Base):
     template_kind: Mapped[str | None] = mapped_column(String(8))  # docx | pdf
     template_file: Mapped[bytes | None] = mapped_column(LargeBinary)
     components: Mapped[list | None] = mapped_column(JSON)
+    unmapped_custom_tags: Mapped[list | None] = mapped_column(JSON)
+    tag_mappings: Mapped[dict | None] = mapped_column(JSON)
     events: Mapped[list | None] = mapped_column(JSON)
     created_by: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
