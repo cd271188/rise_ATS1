@@ -62,6 +62,7 @@ export async function compensationPage(root) {
   const holder = h("div", { class: "stack" });
   let st = await api.get(base);
   let queue = manage ? await api.get("/offer-letters/approval-queue").catch(() => ({ pending: [], approved: [] })) : { pending: [], approved: [] };
+  let tagMappings = { ...(st.current?.tag_mappings || {}) };
   const editableState = (state) => manage && (!state.current || ["draft", "changes_requested", "in_review"].includes(state.current.status));
   const draftFromState = (state) => {
     const components = toDraft(state.current?.components || []);
@@ -82,7 +83,7 @@ export async function compensationPage(root) {
   const reload = async (fromServer = false) => {
     st = await api.get(base + qs({ ctc }));
     if (manage) queue = await api.get("/offer-letters/approval-queue").catch(() => ({ pending: [], approved: [] }));
-    if (fromServer) draft = draftFromState(st);
+    if (fromServer) { draft = draftFromState(st); tagMappings = { ...(st.current?.tag_mappings || {}) }; }
     draw();
   };
   const reloadQueue = async () => {
@@ -94,10 +95,10 @@ export async function compensationPage(root) {
       toast("Wait for the template upload to finish before saving the draft.", "warn");
       return;
     }
-    try { st = await fn(); draft = draftFromState(st); if (okMsg) toast(okMsg, "success"); } catch (e) { toast(e.errors?.structure || errorMessage(e), "error"); }
+    try { st = await fn(); draft = draftFromState(st); tagMappings = { ...(st.current?.tag_mappings || {}) }; if (okMsg) toast(okMsg, "success"); } catch (e) { toast(e.errors?.structure || e.errors?.tag_mappings || errorMessage(e), "error"); }
     draw();
   };
-  const save = () => api.put(base, { components: toBody(draft) });
+  const save = () => api.put(base, { components: toBody(draft), tag_mappings: tagMappings });
 
   function editor(editable) {
     const body = h("tbody");
@@ -181,7 +182,7 @@ export async function compensationPage(root) {
     out.push(compensationCard);
 
     out.push(card("Offer letter sample",
-      h("p", { class: "muted" }, "Upload a sample offer letter or create one in the editor. We suggest placeholders for recognizable candidate fields; review those suggestions and add compensation fields such as {{ctc_annual}} and {{basic_annual}}."),
+      h("p", { class: "muted" }, "Upload a sample offer letter or create one in the editor. Common compensation names are normalized automatically. Unmapped compensation tags are flagged below and can be mapped to a configured head or added as custom components. Annexure tables with Component/Particulars, Annual, and Monthly columns are populated from the compensation structure."),
       cur?.has_template ? h("div", null, h("strong", null, cur.template_name), " ", h("small", { class: "muted" }, cur.template_kind === "docx" ? "Word template" : "PDF template")) : h("p", { class: "muted" }, "No template created yet."),
         h("div", { class: "card-actions" },
           editable ? uploadSampleButton(base + "/template", async (s) => { st = s; draw(); }, cur?.has_template ? "Upload revised offer letter sample" : "Upload offer letter sample", setTemplateUploading) : null,
@@ -191,6 +192,40 @@ export async function compensationPage(root) {
     if (cur?.has_template) out.push(card("Review offer letter draft",
       h("p", { class: "muted" }, "Preview the offer letter with placeholder labels. Edit the draft above if the wording or fields need changes."),
       previewTemplate()));
+
+    const pendingCustomTags = (cur?.placeholders?.unmapped_custom_tags || []).filter((tag) => {
+      const key = tag.replace(/_(annual|monthly)$/, "");
+      return !draft.some((component) => component.key === key);
+    });
+    if (editable && pendingCustomTags.length) {
+      const mappingRows = pendingCustomTags.map((tag) => {
+        const target = h("select", { "aria-label": `Map ${tag} to a compensation component` },
+          h("option", { value: "" }, "Choose existing compensation head"),
+          draft.map((component) => h("option", { value: component.key }, `${component.label} (${component.key})`)));
+        target.value = tagMappings[tag] || "";
+        target.addEventListener("change", () => {
+          if (target.value) tagMappings[tag] = target.value;
+          else delete tagMappings[tag];
+        });
+        return h("tr", null, h("td", null, h("code", null, "{{" + tag + "}}")), h("td", null, target));
+      });
+      out.push(card("Map custom compensation tags",
+        h("p", { class: "notice warn" }, "These tags were saved in the template metadata. Map each one to an existing compensation head or add it as a custom component. Until mapped, the recruiter will be asked for its value."),
+        table(["Template tag", "Compensation head"], mappingRows),
+        h("div", { class: "card-actions" },
+          button("Save mappings", () => run(save, "Custom tag mappings saved."), "primary"),
+          button("Add as custom components", () => {
+        pendingCustomTags.forEach((tag) => {
+          delete tagMappings[tag];
+          const key = slug(tag.replace(/_(annual|monthly)$/, ""));
+          if (draft.some((component) => component.key === key)) return;
+          draft.push({ key, label: key.split("_").map((part) => part[0]?.toUpperCase() + part.slice(1)).join(" "),
+            kind: "earning", calc: "fixed", value: "0", period: "annual", auto: false });
+        });
+        draw();
+        document.getElementById("offer-draft-editor")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }))));
+    }
 
     if (!manage) out.push(h("p", { class: "muted" }, "Only the client company owner can edit or approve this offer setup."));
 
