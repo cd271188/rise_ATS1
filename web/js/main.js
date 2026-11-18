@@ -6,7 +6,6 @@ import { dashboardPage } from "./pages/dashboard.js";
 import { candidateFormPage } from "./pages/candidate_form.js";
 import { candidatesPage } from "./pages/candidates.js";
 import { interviewsPage } from "./pages/interviews.js";
-import { reportsPage } from "./pages/reports.js";
 import { accountPage } from "./pages/settings.js";
 import { teamPage } from "./pages/team.js";
 import { companiesPage, staffPage, activityPage } from "./pages/platform.js";
@@ -22,13 +21,12 @@ const ROUTES = [
   { path: "/rise-team", title: "Rise team", nav: "Rise team", icon: "🛡️", platform: true, creator: true, render: staffPage },
   { path: "/rise-activity", title: "Rise activity", nav: "Rise activity", icon: "", platform: true, perm: "view_audit", render: activityPage },
   { path: "/dashboard", title: "Dashboard", nav: "Dashboard", icon: "📊", render: dashboardPage },
-  { path: "/candidate/new", title: "Add candidate", nav: "Add Candidate", icon: "➕", write: true, render: candidateFormPage },
+  { path: "/candidate/new", title: "Candidate", write: true, render: candidateFormPage },
   { path: "/candidate/:ref", title: "Candidate", render: candidateFormPage },
   { path: "/candidates", title: "Candidates", nav: "Candidates", icon: "≡", render: candidatesPage },
   { path: "/jobs", title: "Client Requirements", nav: "Client Requirements", icon: "📋", render: jobsPage },
   { path: "/jobs/:ref", title: "Job", render: jobPage },
   { path: "/interviews", title: "Interviews", nav: "Interviews", icon: "📅", render: interviewsPage },
-  { path: "/reports", title: "Reports", nav: "Reports", icon: "目", render: reportsPage },
   { path: "/vendors", title: "Vendors", nav: "Vendors", icon: "🏭", admin: true, client: true, render: vendorsPage },
   { path: "/offer", title: "Offer letter", nav: "Offer letter", icon: "📄", admin: true, client: true, render: compensationPage },
   { path: "/team", title: "Team", nav: "Team", icon: "👥", admin: true, render: teamPage },
