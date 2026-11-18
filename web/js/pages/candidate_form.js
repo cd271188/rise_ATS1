@@ -1,7 +1,7 @@
 import { api, qs } from "../api.js";
 import { h, clear, card, pageHeader, field, select, optionsFor, applyErrors, toast, errorMessage, button, can, state, statusBadge, confirmBox, debounce } from "../ui.js";
-import { go } from "../router.js";  
-import { generateOfferDialog, offerReady } from "./offer.js";
+import { go } from "../router.js";
+import { generateOfferDialog, offerReady, previewGeneratedOffer } from "./offer.js";
 
 const SECTIONS = [
   ["Basics", ["date_added", "recruiter", "process", "full_name", "current_company", "current_location", "primary_skill_role"]],
@@ -114,7 +114,8 @@ export async function candidateFormPage(root, params) {
   });
 
   const badge = editing ? h("span", null, "Interview status: ", statusBadge(record.current_status)) : null;
-  const generateOffer = editing && can.owner() && !can.vendor() ? button("Generate offer letter", () => generateOfferDialog(record), "primary") : null;
+  const generateOffer = editing && can.write() ? button("Generate offer letter", () => generateOfferDialog(record,
+    (letter) => previewGeneratedOffer(letter.id)), "primary") : null;
   if (generateOffer) {
     generateOffer.disabled = !offerReady(record);
     generateOffer.title = offerReady(record) ? "Generate offer letter" : "Available when Process is HR Discussion and Interview Status is Yet to Offer";
@@ -146,10 +147,6 @@ export async function candidateFormPage(root, params) {
     };
     await drawHistory();
     root.append(card("Interview history", history_));
-    // if (writable) {
-    //   letters = offerLettersCard(record);
-    //   root.append(letters.node);
-    // }
   }
   setTimeout(() => (editing ? controls.full_name : controls.full_name)?.focus(), 0);
 }
