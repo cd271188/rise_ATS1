@@ -50,6 +50,11 @@ def create_tables(engine):
         ("jobs", "jd_file", "BLOB"),
         ("jobs", "jd_storage_key", "VARCHAR(200)"),
         ("offer_structures", "events", "JSON"),
+        ("offer_structures", "unmapped_custom_tags", "JSON"),
+        ("offer_structures", "tag_mappings", "JSON"),
+        ("offer_letters", "approval_status", "VARCHAR(24) NOT NULL DEFAULT 'approved'"),
+        ("offer_letters", "approved_by", "INTEGER REFERENCES users(id)"),
+        ("offer_letters", "approved_at", "DATETIME"),
         ("candidate_profiles", "embedding_vector", "BLOB"),
         ("jobs", "embedding_vector", "BLOB"),
     )
