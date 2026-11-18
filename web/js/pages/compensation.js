@@ -1,7 +1,7 @@
 // Client owner: create, review, and approve the offer letter template and compensation setup.
-import { api, qs } from "../api.js";
+import { api } from "../api.js";
 import { h, clear, card, pageHeader, field, button, toast, errorMessage, confirmBox, can, modal, table } from "../ui.js";
-import { breakup, placeholderSummary, templateEditorButton, uploadSampleButton, statusBadge, previewGeneratedOffer } from "./offer.js";
+import { placeholderSummary, templateEditorButton, uploadSampleButton, statusBadge, previewGeneratedOffer } from "./offer.js";
 
 const KINDS = [["earning", "Earning (paid to the employee)"], ["employer", "Employer cost (part of CTC)"], ["deduction", "Deduction (outside CTC)"]];
 const CALCS = [["pct_ctc", "% of CTC"], ["pct_basic", "% of Basic"], ["fixed", "Fixed amount"], ["balance", "Balance of the CTC"]];
@@ -69,7 +69,6 @@ export async function compensationPage(root) {
     return editableState(state) ? withStandardParticulars(components) : components;
   };
   let draft = draftFromState(st);
-  let ctc = "";
   let templateUploading = false;
   let saveDraftButton = null;
   let approveButton = null;
@@ -80,12 +79,6 @@ export async function compensationPage(root) {
     if (approveButton) approveButton.disabled = busy;
   };
 
-  const reload = async (fromServer = false) => {
-    st = await api.get(base + qs({ ctc }));
-    if (manage) queue = await api.get("/offer-letters/approval-queue").catch(() => ({ pending: [], approved: [] }));
-    if (fromServer) { draft = draftFromState(st); tagMappings = { ...(st.current?.tag_mappings || {}) }; }
-    draw();
-  };
   const reloadQueue = async () => {
     queue = await api.get("/offer-letters/approval-queue").catch(() => ({ pending: [], approved: [] }));
     draw();
@@ -229,13 +222,6 @@ export async function compensationPage(root) {
 
     if (!manage) out.push(h("p", { class: "muted" }, "Only the client company owner can edit or approve this offer setup."));
 
-    if (cur?.components.length) {
-      const sample = h("input", { type: "text", inputmode: "numeric", placeholder: "e.g. 1200000", value: ctc, "aria-label": "Annual CTC to try" });
-      out.push(card("Example breakup (saved components)",
-        h("div", { class: "card-actions" }, field("Try an annual CTC (INR)", sample), button("Show", () => { ctc = sample.value.trim(); reload(); })),
-        cur.preview ? breakup(cur.preview) : h("p", { class: "notice warn" }, cur.preview_error || "")));
-    }
-
     if (editable) {
       saveDraftButton = button("Save draft", () => run(save, "Draft saved."), "primary");
       saveDraftButton.disabled = templateUploading;
@@ -244,7 +230,7 @@ export async function compensationPage(root) {
 
     if (editable && cur) {
       out.push(card("Review and approve",
-        h("p", { class: "muted" }, "Review the template preview and compensation breakup above. Approving activates this version for offer generation and downloads."),
+        h("p", { class: "muted" }, "Review the template preview and compensation components above. Approving activates this version for offer generation and downloads."),
         !cur.has_template ? h("p", { class: "notice warn" }, "Upload or create an offer letter template before approval.") : null,
         !cur.components.length ? h("p", { class: "notice warn" }, "Add at least one compensation component before approval.") : null,
         !cur.has_template ? h("div", { class: "card-actions" }, button("Edit offer letter draft", () => document.getElementById("offer-letter-editor-button")?.click())) : null,
