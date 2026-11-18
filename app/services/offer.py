@@ -3,11 +3,12 @@ import logging
 import re
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
-from ..models import Candidate, OfferLetter, OfferStructure, Organization, User, utcnow
+from ..models import Candidate, Job, OfferLetter, OfferStructure, Organization, User, utcnow
 from . import audit, offer_docs
 from .candidates import get_row, public_id, scope
+from .jobs import parse_ref as parse_job_ref, public_id as job_public_id
 from .common import Conflict, Ctx, Forbidden, NotFound, ValidationError, org_today
 from .platform import BY, _client, _need, _need_platform
 
@@ -16,8 +17,9 @@ log = logging.getLogger("ats")
 KINDS = ("earning", "employer", "deduction")
 CALCS = ("pct_ctc", "pct_basic", "fixed", "balance")
 PERIODS = ("monthly", "annual")
-SYSTEM_FIELDS = ("candidate_name", "candidate_email", "candidate_phone", "candidate_id", "designation", "client",
-                 "job_req_id", "company_name", "offer_date")
+SYSTEM_FIELDS = ("candidate_name", "candidate_email", "candidate_phone", "candidate_id", "client",
+                 "job_req_id", "job_title", "company_name", "offer_date")
+MANUAL_FIELDS = {"designation", "band_or_grade", "department", "joining_date", "city", "state", "location"}
 TOTALS = ("ctc_annual", "ctc_monthly", "gross_annual", "gross_monthly")
 RESERVED = set(SYSTEM_FIELDS) | {"ctc", "gross"}
 WORKING = ("draft", "in_review", "changes_requested")
@@ -63,6 +65,7 @@ def _component_label(value) -> str:
     text = offer_docs._clean(value)
     # Older versions accidentally persisted split labels and then nested their repr on each save.
     text = re.sub(r"[\[\]\\\"']", " ", text)
+    text = re.sub(r"\s*,+\s*", " ", text)
     return " ".join(text.split()[:60])
 
 
@@ -196,6 +199,8 @@ def classify(names: list[str], components: list[dict]) -> dict:
             out["automatic"].append(n)
         elif n in comp:
             out["compensation"].append(n)
+        elif n in MANUAL_FIELDS:
+            out["asked"].append(n)
         elif n.endswith(("_annual", "_monthly")):
             out["unknown"].append(n)
         else:
@@ -476,7 +481,7 @@ def owner_template_text(ctx: Ctx, data: dict) -> dict:
     audit.record(ctx, "offer.template_save", "offer_structure", s.id, {"version": s.version, "file": s.template_name})
     ctx.db.commit()
     return _state(ctx.db, org)
-  
+
 
 def owner_template_file(ctx: Ctx) -> tuple[bytes, str, str]:
     return _template_of(ctx, _own_org(ctx, False))
@@ -563,10 +568,10 @@ def _need_write(ctx: Ctx) -> None:
         raise Forbidden("your role is read-only")
 
 
-def _need_owner(ctx: Ctx) -> None:
+def _need_company_owner(ctx: Ctx) -> None:
     if ctx.role != "owner" or ctx.org.is_platform or ctx.vendor_id:
-        raise Forbidden("only the company owner can generate offer letters")
-      
+        raise Forbidden("only the company owner can approve offer letters")
+
 
 def _require_offer_stage(cand: Candidate) -> None:
     if cand.process != "HR Discussion" or cand.current_status != "Yet to Offer":
@@ -580,11 +585,24 @@ def _accepted(ctx: Ctx) -> OfferStructure:
     return s
 
 
+def _job_title(ctx: Ctx, cand: Candidate) -> str:
+    ref = (cand.job_req_id or "").strip()
+    if not ref:
+        return ""
+    stmt = select(Job).where(Job.org_id == ctx.data_org_id, Job.deleted_at.is_(None),
+                             or_(Job.client_ref == ref, Job.seq == (parse_job_ref(ref) or -1)))
+    if cand.client:
+        stmt = stmt.where(func.lower(Job.client) == cand.client.strip().lower())
+    job = ctx.db.scalar(stmt.order_by(Job.seq.desc()))
+    return job.title if job else ""
+
+
 def _automatic(ctx: Ctx, cand: Candidate) -> dict:
     org = ctx.db.get(Organization, ctx.data_org_id)
     return {"candidate_name": cand.full_name or "", "candidate_email": cand.email or "", "candidate_phone": cand.phone or "",
-            "candidate_id": public_id(cand.seq), "designation": cand.primary_skill_role or "", "client": cand.client or "",
-            "job_req_id": cand.job_req_id or "", "company_name": org.name, "offer_date": org_today(org).strftime("%d %B %Y")}
+            "candidate_id": public_id(cand.seq), "client": cand.client or "", "job_req_id": cand.job_req_id or "",
+            "job_title": _job_title(ctx, cand), "company_name": org.name,
+            "offer_date": org_today(org).strftime("%d %B %Y")}
 
 
 def letter_form(ctx: Ctx, ref) -> dict:
@@ -600,7 +618,7 @@ def letter_form(ctx: Ctx, ref) -> dict:
 
 
 def letter_preview(ctx: Ctx, ref, data: dict) -> dict:
-    _need_owner(ctx)
+    _need_write(ctx)
     _require_offer_stage(get_row(ctx, ref))
     s = _accepted(ctx)
     return compute(s.components or [], parse_ctc(data.get("ctc")))
@@ -630,11 +648,12 @@ def _resolve(ctx: Ctx, s: OfferStructure, cand: Candidate, data: dict) -> dict:
 
 def _letter_dict(id: int, created_at, by: str | None, engine: str, version: int, public: str) -> dict:
     return {"id": id, "candidate_id": public, "created_at": created_at.strftime("%Y-%m-%d %H:%M"), "generated_by": by,
-            "engine": engine, "version": version, "filename": f"Offer_{public}_{created_at:%Y%m%d}.pdf"}
+            "engine": engine, "version": version, "approval_status": "pending_approval",
+            "filename": f"Offer_{public}_{created_at:%Y%m%d}.pdf"}
 
 
 def generate(ctx: Ctx, ref, data: dict) -> dict:
-    _need_owner(ctx)
+    _need_write(ctx)
     cand = get_row(ctx, ref)
     _require_offer_stage(cand)
     s = _accepted(ctx)
@@ -645,7 +664,8 @@ def generate(ctx: Ctx, ref, data: dict) -> dict:
         log.exception("offer letter rendering failed for structure %s", s.id)
         raise ValueError("the letter could not be produced from this template; ask Rise Consulting to check it")
     letter = OfferLetter(org_id=ctx.data_org_id, candidate_id=cand.id, structure_id=s.id, vendor_org_id=cand.vendor_org_id,
-                         generated_by=ctx.user.id, values=values, pdf=pdf, pdf_engine=engine)
+                         generated_by=ctx.user.id, values=values, pdf=pdf, pdf_engine=engine,
+                         approval_status="pending_approval")
     ctx.db.add(letter)
     ctx.db.flush()
     public = public_id(cand.seq)
@@ -658,25 +678,75 @@ def generate(ctx: Ctx, ref, data: dict) -> dict:
     return out
 
 
+def _letter_for_candidate_scope(ctx: Ctx, letter_id: int) -> tuple[OfferLetter, Candidate]:
+    letter = ctx.db.scalar(select(OfferLetter).where(OfferLetter.id == letter_id,
+                                                    OfferLetter.org_id == ctx.data_org_id))
+    cand = ctx.db.scalar(select(Candidate).where(*scope(ctx), Candidate.id == letter.candidate_id)) if letter else None
+    if not letter or not cand:
+        raise NotFound("offer letter not found")
+    return letter, cand
+
+
+def approval_queue(ctx: Ctx) -> dict:
+    _need_company_owner(ctx)
+    rows = ctx.db.execute(
+        select(OfferLetter.id, OfferLetter.created_at, OfferLetter.pdf_engine, OfferLetter.approval_status,
+               Candidate.seq, Candidate.full_name, User.full_name, OfferStructure.version)
+        .join(Candidate, Candidate.id == OfferLetter.candidate_id)
+        .outerjoin(User, User.id == OfferLetter.generated_by)
+        .join(OfferStructure, OfferStructure.id == OfferLetter.structure_id)
+        .where(OfferLetter.org_id == ctx.data_org_id,
+               Candidate.deleted_at.is_(None))
+        .order_by(OfferLetter.created_at.asc())).all()
+    items = [{**_letter_dict(letter_id, created_at, by, engine, version, public_id(seq)),
+              "candidate_name": candidate_name, "approval_status": approval_status}
+             for letter_id, created_at, engine, approval_status, seq, candidate_name, by, version in rows]
+    return {"pending": [item for item in items if item["approval_status"] == "pending_approval"],
+            "approved": [item for item in items if item["approval_status"] == "approved"]}
+
+
+def approve_letter(ctx: Ctx, letter_id: int) -> dict:
+    _need_company_owner(ctx)
+    letter, cand = _letter_for_candidate_scope(ctx, letter_id)
+    if letter.approval_status != "pending_approval":
+        raise Conflict("this offer letter is no longer waiting for approval")
+    letter.approval_status = "approved"
+    letter.approved_by = ctx.user.id
+    letter.approved_at = utcnow()
+    structure = ctx.db.get(OfferStructure, letter.structure_id)
+    audit.record(ctx, "offer.approve", "candidate", cand.id,
+                 {"candidate": public_id(cand.seq), "letter": letter.id,
+                  "version": structure.version if structure else None})
+    ctx.db.commit()
+    return {"id": letter.id, "approval_status": letter.approval_status,
+            "approved_at": letter.approved_at.strftime("%Y-%m-%d %H:%M")}
+
+
+def preview_letter(ctx: Ctx, letter_id: int) -> tuple[bytes, str]:
+    _need_write(ctx)
+    letter, cand = _letter_for_candidate_scope(ctx, letter_id)
+    return letter.pdf, f"Offer_{public_id(cand.seq)}_{letter.created_at:%Y%m%d}.pdf"
+
+
 def list_letters(ctx: Ctx, ref) -> list[dict]:
     _need_write(ctx)
     cand = get_row(ctx, ref)
     rows = ctx.db.execute(
-        select(OfferLetter.id, OfferLetter.created_at, OfferLetter.pdf_engine, User.full_name, OfferStructure.version)
+        select(OfferLetter.id, OfferLetter.created_at, OfferLetter.pdf_engine, User.full_name,
+               OfferStructure.version, OfferLetter.approval_status)
         .join(OfferStructure, OfferStructure.id == OfferLetter.structure_id)
         .outerjoin(User, User.id == OfferLetter.generated_by)
         .where(OfferLetter.org_id == ctx.data_org_id, OfferLetter.candidate_id == cand.id).order_by(OfferLetter.id.desc())).all()
-    return [_letter_dict(r[0], r[1], r[3], r[2], r[4], public_id(cand.seq)) for r in rows]
+    return [{**_letter_dict(r[0], r[1], r[3], r[2], r[4], public_id(cand.seq)), "approval_status": r[5]}
+            for r in rows]
 
 
 def download(ctx: Ctx, letter_id: int) -> tuple[bytes, str]:
     _need_write(ctx)
-    letter = ctx.db.scalar(select(OfferLetter).where(OfferLetter.id == letter_id, OfferLetter.org_id == ctx.data_org_id))
-    cand = letter and ctx.db.scalar(select(Candidate).where(*scope(ctx), Candidate.id == letter.candidate_id))
-    if not letter or not cand:
-        raise NotFound("offer letter not found")
+    letter, cand = _letter_for_candidate_scope(ctx, letter_id)
+    if letter.approval_status != "approved":
+        raise Forbidden("the company owner must approve this offer letter before it can be downloaded")
     structure = ctx.db.get(OfferStructure, letter.structure_id)
     if not structure or structure.status not in ("active", "superseded"):
         raise Forbidden("this offer letter cannot be downloaded until its set-up is approved")
-    _require_offer_stage(cand)
     return letter.pdf, f"Offer_{public_id(cand.seq)}_{letter.created_at:%Y%m%d}.pdf"
