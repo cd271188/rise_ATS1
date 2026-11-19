@@ -5,7 +5,6 @@ import { loginScreen, forcePasswordScreen } from "./pages/auth.js";
 import { dashboardPage } from "./pages/dashboard.js";
 import { candidateFormPage } from "./pages/candidate_form.js";
 import { candidatesPage } from "./pages/candidates.js";
-import { interviewsPage } from "./pages/interviews.js";
 import { accountPage } from "./pages/settings.js";
 import { teamPage } from "./pages/team.js";
 import { companiesPage, staffPage, activityPage } from "./pages/platform.js";
@@ -26,7 +25,6 @@ const ROUTES = [
   { path: "/candidates", title: "Candidates", nav: "Candidates", icon: "≡", render: candidatesPage },
   { path: "/jobs", title: "Client Requirements", nav: "Client Requirements", icon: "📋", render: jobsPage },
   { path: "/jobs/:ref", title: "Job", render: jobPage },
-  { path: "/interviews", title: "Interviews", nav: "Interviews", icon: "📅", render: interviewsPage },
   { path: "/vendors", title: "Vendors", nav: "Vendors", icon: "🏭", admin: true, client: true, render: vendorsPage },
   { path: "/offer", title: "Offer letter", nav: "Offer letter", icon: "📄", admin: true, client: true, render: compensationPage },
   { path: "/team", title: "Team", nav: "Team", icon: "👥", admin: true, render: teamPage },
