@@ -126,12 +126,12 @@ def clean_components(raw) -> list[dict]:
 
 def compute(components: list[dict], ctc: int) -> dict:
     """Annual and monthly rupee amounts per component for an annual CTC."""
-    total = Decimal(ctc)
+    target_ctc = Decimal(ctc)
 
     def amount(c, basic):
         v = Decimal(str(c["value"]))
         if c["calc"] == "pct_ctc":
-            return total * v / 100
+            return target_ctc * v / 100
         if c["calc"] == "pct_basic":
             return Decimal(basic) * v / 100
         return v * 12 if c["period"] == "monthly" else v
@@ -161,7 +161,8 @@ def compute(components: list[dict], ctc: int) -> dict:
                                "annual_text": inr(a), "monthly_text": inr(m)})
     gross = sum(r["annual"] for r in component_rows if r["kind"] == "earning")
     gross_monthly = _round(Decimal(gross) / 12)
-    ctc_monthly = _round(Decimal(ctc) / 12)
+    total_ctc = sum(r["annual"] for r in component_rows if r["kind"] != "deduction")
+    ctc_monthly = _round(Decimal(total_ctc) / 12)
     earnings = [r for r in component_rows if r["kind"] == "earning"]
     employer_costs = [r for r in component_rows if r["kind"] == "employer"]
     deductions = [r for r in component_rows if r["kind"] == "deduction"]
@@ -169,10 +170,10 @@ def compute(components: list[dict], ctc: int) -> dict:
         {"key": "gross", "label": "Gross Salary", "kind": "total", "annual": gross, "monthly": gross_monthly,
          "annual_text": inr(gross), "monthly_text": inr(gross_monthly)}
     ] + employer_costs + deductions + [
-        {"key": "ctc", "label": "Total Annual CTC", "kind": "total", "annual": ctc, "monthly": ctc_monthly,
-         "annual_text": inr(ctc), "monthly_text": inr(ctc_monthly)}
+        {"key": "ctc", "label": "Total Annual CTC", "kind": "total", "annual": total_ctc, "monthly": ctc_monthly,
+         "annual_text": inr(total_ctc), "monthly_text": inr(ctc_monthly)}
     ]
-    return {"ctc": ctc, "ctc_text": inr(ctc), "rows": rows, "gross": gross, "gross_text": inr(gross),
+    return {"ctc": total_ctc, "ctc_text": inr(total_ctc), "rows": rows, "gross": gross, "gross_text": inr(gross),
             "unallocated": ctc - allocated, "unallocated_text": inr(ctc - allocated)}
 
 
@@ -546,7 +547,7 @@ def owner_template_preview(ctx: Ctx) -> bytes:
             sample = compute(s.components, _sample_ctc(s.components))
             values["compensation_rows"] = [
                 {"component_name": row["label"], "annual_amount": row["annual_text"],
-                 "monthly_amount": row["monthly_text"]}
+                 "monthly_amount": row["monthly_text"], "kind": row["kind"]}
                 for row in sample["rows"] if row["kind"] != "total"]
         pdf, _engine = offer_docs.render(kind, blob, values)
         return pdf
@@ -690,7 +691,7 @@ def _resolve(ctx: Ctx, s: OfferStructure, cand: Candidate, data: dict) -> dict:
         computed = compensation_values(calc)
         computed["compensation_rows"] = [
             {"component_name": row["label"], "annual_amount": row["annual_text"],
-             "monthly_amount": row["monthly_text"]}
+             "monthly_amount": row["monthly_text"], "kind": row["kind"]}
             for row in calc["rows"] if row["kind"] != "total"]
         values.update(computed)
         component_keys = {c["key"] for c in (s.components or [])}
