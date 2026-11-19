@@ -362,6 +362,8 @@ def placeholders(kind: str, blob: bytes) -> dict:
         if any(any(_compensation_columns([cell.text for cell in row.cells]) is not None
                    for row in table.rows) and len(table.rows) > 1 for table in _iter_tables(doc)):
             info["has_compensation_rows"] = True
+            info["names"] = [name for name in info["names"]
+                             if name not in {"component_name", "annual_amount", "monthly_amount"}]
         return info
     return _scan(_pdf_boxes(blob)[1])
 
@@ -477,6 +479,10 @@ def _expand_detected_compensation_table(table, items: list[dict], deepcopy) -> N
         if not columns:
             continue
         component_col, annual_col, monthly_col = columns
+        heading = sanitize_tag(" ".join(cell.text for cell in header.cells))
+        section_kind = "earning" if any(word in heading for word in ("fixed", "allowance", "gross")) else (
+            "employer" if any(word in heading for word in ("statutory", "employer", "ctc")) else None)
+        section_items = [item for item in items if section_kind is None or item.get("kind") == section_kind]
         start = header_index + 1
         if start >= len(rows):
             continue
@@ -491,7 +497,7 @@ def _expand_detected_compensation_table(table, items: list[dict], deepcopy) -> N
         for row in rows[start:end]:
             parent.remove(row._tr)
         from docx.table import _Row
-        for offset, item in enumerate(items):
+        for offset, item in enumerate(section_items):
             clone = deepcopy(template)
             cloned_row = _Row(clone, table)
             values = {component_col: item.get("component_name", ""),
