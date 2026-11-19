@@ -92,21 +92,12 @@ function editorHtml(text, components = []) {
 }
 
 function compensationAnnexure(components = []) {
-  const esc = escapeEditorText;
-  const priority = { basic: 0, hra: 1, special: 2, employer_pf: 0, gratuity: 1 };
-  const ordered = [...components].sort((a, b) => {
-    const group = { earning: 0, employer: 1, deduction: 2 };
-    return (group[a.kind] ?? 3) - (group[b.kind] ?? 3) || (priority[a.key] ?? 10) - (priority[b.key] ?? 10) || a.key.localeCompare(b.key);
-  });
-  const earnings = ordered.filter((c) => c.kind === "earning");
-  const employerCosts = ordered.filter((c) => c.kind === "employer");
-  const deductions = ordered.filter((c) => c.kind === "deduction");
-  const componentRow = (c) => `<tr><td>${esc(c.label)}</td><td>{{${esc(c.key)}_annual}}</td><td>{{${esc(c.key)}_monthly}}</td></tr>`;
-  const rows = earnings.map(componentRow);
-  rows.push("<tr><th>Gross Salary</th><th>{{gross_annual}}</th><th>{{gross_monthly}}</th></tr>");
-  rows.push(...employerCosts.map(componentRow), ...deductions.map(componentRow));
-  rows.push("<tr><th>Total Annual CTC</th><th>{{ctc_annual}}</th><th>{{ctc_monthly}}</th></tr>");
-  return `<h2>ANNEXURE A — ANNUAL COMPENSATION STRUCTURE</h2><table><thead><tr><th>Particulars</th><th>Annual Amount (INR)</th><th>Monthly Amount (INR)</th></tr></thead><tbody>${rows.join("")}</tbody></table><p><br></p>`;
+  if (!components.length) return "";
+  const row = `<tr><td>{{component_name}}</td><td>{{annual_amount}}</td><td>{{monthly_amount}}</td></tr>`;
+  const head = (section) => `<thead><tr><th>${section} — Particulars</th><th>Annual Amount (INR)</th><th>Monthly Amount (INR)</th></tr></thead>`;
+  return `<h2>ANNEXURE A — ANNUAL COMPENSATION STRUCTURE</h2>
+    <table>${head("Fixed & Allowances (Part of Gross Salary)")}<tbody>${row}<tr><th>Gross Salary (Subtotal)</th><th>{{gross_annual}}</th><th>{{gross_monthly}}</th></tr></tbody></table>
+    <table>${head("Statutory Provisions (Part of CTC)")}<tbody>${row}<tr><th>Total Annual CTC</th><th>{{ctc_annual}}</th><th>{{ctc_monthly}}</th></tr></tbody></table><p><br></p>`;
 }
 
 export function uploadSampleButton(path, onDone, label = "Upload offer letter sample", onBusy = () => {}) {
