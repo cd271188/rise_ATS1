@@ -129,6 +129,12 @@ export function createGrid({ columns, load, canEdit, save, rowActions, onChange,
   function paint(td, row, col) {
     clear(td);
     const t = text(row, col);
+    if (col.render) {
+      const node = col.render(row);
+      if (node) td.append(node);
+      td.title = col.label;
+      return;
+    }
     if (col.inlineSelect) {
       const input = select(optionsFor(col.list), t, { class: "grid-inline-select", "aria-label": col.label });
       input.addEventListener("mousedown", (e) => e.stopPropagation());
