@@ -92,9 +92,8 @@ export async function compensationPage(root) {
 
   function editor(editable) {
     const sections = [
-      { kind: "earning", title: "Fixed & Allowances (Part of Gross Salary)", total: "Gross Salary (Subtotal)" },
-      { kind: "employer", title: "Statutory Provisions (Part of CTC)", total: "Total Annual CTC" },
-      { kind: "deduction", title: "Deductions (Outside CTC)", total: null },
+      { kind: "earning", title: "Fixed & Allowances (Part of Gross Salary)" },
+      { kind: "employer", title: "Statutory Provisions (Part of CTC)" },
     ];
     const sectionBodies = new Map(sections.map((s) => [s.kind, h("tbody")]));
     const paint = () => {
@@ -129,8 +128,7 @@ export async function compensationPage(root) {
       ...sections.map((section) => h("section", { class: "stack" },
         h("h3", null, section.title),
         h("div", { class: "table-wrap" }, h("table", { class: "data" }, h("thead", null, h("tr", null, ["Particulars", "key (used in the letter)", "How it is worked out", "Value", ""].map((x) => h("th", null, x)))), sectionBodies.get(section.kind))),
-        section.total ? h("p", { class: "muted" }, section.total, " is calculated automatically from the components in this section.") : null,
-        editable ? h("div", { class: "card-actions" }, button(`Add ${section.kind === "earning" ? "fixed or allowance" : section.kind === "employer" ? "statutory provision" : "deduction"}`, () => { draft.push(blank(section.kind)); paint(); })) : null)),
+        editable ? h("div", { class: "card-actions" }, button("Add component", () => { draft.push(blank(section.kind)); paint(); })) : null)),
       h("p", { class: "muted" }, "In the letter, use {{key_annual}} and {{key_monthly}} for each component, for example ",
         h("code", null, "{{basic_annual}}"), ". Totals are {{ctc_annual}}, {{ctc_monthly}}, {{gross_annual}} and {{gross_monthly}}. The CTC for each letter is entered when it is made."));
   }
