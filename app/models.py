@@ -182,6 +182,8 @@ class OfferStructure(Base):
     template_kind: Mapped[str | None] = mapped_column(String(8))  # docx | pdf
     template_file: Mapped[bytes | None] = mapped_column(LargeBinary)
     components: Mapped[list | None] = mapped_column(JSON)
+    unmapped_custom_tags: Mapped[list | None] = mapped_column(JSON)
+    tag_mappings: Mapped[dict | None] = mapped_column(JSON)
     events: Mapped[list | None] = mapped_column(JSON)
     created_by: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
@@ -205,6 +207,9 @@ class OfferLetter(Base):
     values: Mapped[dict | None] = mapped_column(JSON)
     pdf: Mapped[bytes] = mapped_column(LargeBinary)
     pdf_engine: Mapped[str] = mapped_column(String(20), default="builtin")
+    approval_status: Mapped[str] = mapped_column(String(24), default="pending_approval", server_default="pending_approval")
+    approved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
 class CvDocument(Base):

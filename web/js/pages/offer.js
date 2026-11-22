@@ -44,6 +44,8 @@ export function placeholderSummary(ph) {
   return h("div", { class: "stack" },
     any ? GROUPS.filter(([k]) => ph[k].length).map(([k, title]) => h("div", null, h("strong", null, title), h("div", null, names(ph[k])))) : h("p", { class: "muted" }, "No {{placeholders}} found in this file"),
     ph.unknown.length ? h("p", { class: "notice warn" }, "No compensation component matches: ", names(ph.unknown), ". Add that component, or fix the name in the letter.") : null,
+    ph.unmapped_custom_tags?.length ? h("p", { class: "notice warn" }, "Notice: Found unmapped custom tag(s): ", names(ph.unmapped_custom_tags), ". Add a matching compensation component below, or rename the tag to an existing compensation head. Generation remains available; unmatched values will be requested from the recruiter.") : null,
+    ph.has_compensation_rows ? h("p", { class: "notice" }, "A compensation breakdown table was detected. Its detail rows will be populated from the configured compensation components.") : null,
     ph.malformed.length ? h("p", { class: "notice warn" }, "A {{ }} is broken near: ", ph.malformed.map((m) => h("em", null, `${m}`))) : null);
 }
 
@@ -90,21 +92,12 @@ function editorHtml(text, components = []) {
 }
 
 function compensationAnnexure(components = []) {
-  const esc = escapeEditorText;
-  const priority = { basic: 0, hra: 1, special: 2, employer_pf: 0, gratuity: 1 };
-  const ordered = [...components].sort((a, b) => {
-    const group = { earning: 0, employer: 1, deduction: 2 };
-    return (group[a.kind] ?? 3) - (group[b.kind] ?? 3) || (priority[a.key] ?? 10) - (priority[b.key] ?? 10) || a.key.localeCompare(b.key);
-  });
-  const earnings = ordered.filter((c) => c.kind === "earning");
-  const employerCosts = ordered.filter((c) => c.kind === "employer");
-  const deductions = ordered.filter((c) => c.kind === "deduction");
-  const componentRow = (c) => `<tr><td>${esc(c.label)}</td><td>{{${esc(c.key)}_annual}}</td><td>{{${esc(c.key)}_monthly}}</td></tr>`;
-  const rows = earnings.map(componentRow);
-  rows.push("<tr><th>Gross Salary</th><th>{{gross_annual}}</th><th>{{gross_monthly}}</th></tr>");
-  rows.push(...employerCosts.map(componentRow), ...deductions.map(componentRow));
-  rows.push("<tr><th>Total Annual CTC</th><th>{{ctc_annual}}</th><th>{{ctc_monthly}}</th></tr>");
-  return `<h2>ANNEXURE A — ANNUAL COMPENSATION STRUCTURE</h2><table><thead><tr><th>Particulars</th><th>Annual Amount (INR)</th><th>Monthly Amount (INR)</th></tr></thead><tbody>${rows.join("")}</tbody></table><p><br></p>`;
+  if (!components.length) return "";
+  const row = `<tr><td>{{component_name}}</td><td>{{annual_amount}}</td><td>{{monthly_amount}}</td></tr>`;
+  const head = (section) => `<thead><tr><th>${section} — Particulars</th><th>Annual Amount (INR)</th><th>Monthly Amount (INR)</th></tr></thead>`;
+  return `<h2>ANNEXURE A — ANNUAL COMPENSATION STRUCTURE</h2>
+    <table>${head("Fixed & Allowances (Part of Gross Salary)")}<tbody>${row}<tr><th>Gross Salary (Subtotal)</th><th>{{gross_annual}}</th><th>{{gross_monthly}}</th></tr></tbody></table>
+    <table>${head("Statutory Provisions (Part of CTC)")}<tbody>${row}<tr><th>Total Annual CTC</th><th>{{ctc_annual}}</th><th>{{ctc_monthly}}</th></tr></tbody></table><p><br></p>`;
 }
 
 export function uploadSampleButton(path, onDone, label = "Upload offer letter sample", onBusy = () => {}) {
@@ -203,7 +196,7 @@ export function templateEditorButton(path, current, onDone) {
       state?.template_kind === "pdf" ? h("p", { class: "notice warn" }, "Text was extracted from this PDF sample. Saving it converts the letter to an editable Word template; PDF layout and styling may change. Scanned PDFs without selectable text cannot be converted.") : null,
       state?.template_text ? h("p", { class: "notice" }, "Likely candidate fields are shown as placeholders. Review each suggestion before saving.") : null,
       field("Offer letter name", name), h("label", { class: "field-label" }, "Offer letter content"), toolbar, content,
-      h("p", { class: "muted" }, "Use {{field_name}} for values filled automatically or requested when an offer is generated. Annexure A is populated from the compensation particulars above; review it before saving."),
+      h("p", { class: "muted" }, "Use {{field_name}} for values filled automatically or requested when an offer is generated. A table headed Component/Particulars, Annual, and Monthly is populated from compensation particulars; alternatively wrap one DOCX detail row with {#compensation_rows} and {/compensation_rows}, using {{component_name}}, {{annual_amount}}, and {{monthly_amount}} inside it."),
       h("div", { class: "actions" }, button("Cancel", () => m.close()), save));
     const m = modal("Offer letter draft editor", body, { wide: true });
     save.addEventListener("click", async () => {
@@ -225,6 +218,27 @@ export function templateEditorButton(path, current, onDone) {
 
 export const withExt = (name, kind) => (name.toLowerCase().endsWith("." + kind) ? name : name + "." + kind);
 export const offerReady = (candidate) => candidate?.process === "HR Discussion" && candidate?.current_status === "Yet to Offer";
+
+export async function previewGeneratedOffer(letterId, { canApprove = false, onApproved = null } = {}) {
+  let url;
+  try { url = URL.createObjectURL(await api.getBlob(`/offer-letters/${letterId}/preview`)); }
+  catch (e) { toast(errorMessage(e), "error"); return; }
+  const frame = h("iframe", { title: "Generated offer letter preview", class: "offer-template-frame", src: url });
+  let m;
+  const close = () => { m.close(); URL.revokeObjectURL(url); };
+  const actions = [button("Close", close)];
+  if (canApprove) actions.unshift(button("Approve offer letter", async () => {
+    try {
+      await api.post(`/offer-letters/${letterId}/approve`);
+      toast("Offer letter approved. It can now be downloaded.", "success");
+      close();
+      await onApproved?.();
+    } catch (e) { toast(errorMessage(e), "error"); }
+  }, "primary"));
+  m = modal("Generated offer letter preview", h("div", null, frame,
+    canApprove ? null : h("p", { class: "notice" }, "This letter is waiting for company owner approval. Download is available after approval."),
+    h("div", { class: "actions" }, actions)), { wide: true });
+}
 
 // ---------------------------------------------------------------- the owner's page
 export async function offerPage(root) {
@@ -265,7 +279,7 @@ export async function offerPage(root) {
       case "draft": return "Rise Consulting is preparing this. You will be asked to review it when it is ready." + other;
       case "in_review": return (owner ? "Please read the letter and the compensation below, then accept it or send your feedback." : "Waiting for the company owner to accept it.") + other;
       case "changes_requested": return "The feedback has gone to Rise Consulting, who will send a corrected version." + other;
-      default: return "Accepted. The company owner can generate offer letters from a candidate's page. Recruiters and vendor users can download generated letters. Only Rise Consulting can change this set-up; leave a note if something needs to change.";
+      default: return "Accepted. Recruiters can generate offer letters from a candidate's page. The company owner reviews and approves each letter before it can be downloaded. Only Rise Consulting can change this set-up; leave a note if something needs to change.";
     }
   }
 
@@ -342,12 +356,12 @@ export async function generateOfferDialog(record, onDone) {
   const ctc = h("input", { type: "text", inputmode: "numeric", dataset: { name: "ctc" }, placeholder: "e.g. 1200000" });
   const preview = h("div");
   const inputs = setup.inputs.map((i) => [i, h("input", { type: "text", dataset: { name: i.name }, maxlength: 200 })]);
-  const make = h("button", { class: "btn primary", type: "submit" }, "Generate PDF");
+  const make = h("button", { class: "btn primary", type: "submit" }, "Generate and send for approval");
 
   const form = h("form", { class: "stack", novalidate: true },
     h("p", { class: "muted" }, `Uses the accepted set-up (version ${setup.version}). The letter is dated today.`),
     setup.automatic.length ? h("div", null, h("strong", null, "From the portal"),
-      h("ul", { class: "plain" }, setup.automatic.map((a) => h("li", null, `${a.label}: `, a.value ? h("strong", null, a.value) : h("em", { class: "muted" }, "(empty - fill it in on the candidate first)"))))) : null,
+      h("ul", { class: "plain" }, setup.automatic.map((a) => h("li", null, `${a.label}: `, a.value ? h("strong", null, a.value) : h("em", { class: "muted" }, a.name === "job_title" ? "(no matching linked requirement found)" : "(empty - fill it in on the candidate first)"))))) : null,
     setup.needs_ctc ? [field("Annual CTC (INR)", ctc, { hint: "Whole rupees per year. The breakup below is worked out from the accepted structure." }),
       h("div", { class: "card-actions" }, button("Show breakup", async () => {
         try { clear(preview).append(breakup(await api.post(`/candidates/${ref}/offer-letters/preview`, { ctc: ctc.value }))); applyErrors(form, {}); } catch (ex) {
@@ -366,9 +380,8 @@ export async function generateOfferDialog(record, onDone) {
     try {
       const letter = await api.post(`/candidates/${ref}/offer-letters`, { ctc: ctc.value, inputs: Object.fromEntries(inputs.map(([i, el]) => [i.name, el.value])) });
       m.close();
-      toast("Offer letter ready.", "success");
-      await api.download(`/offer-letters/${letter.id}/pdf`, letter.filename).catch((ex) => toast(errorMessage(ex), "error"));
-      if (onDone) await onDone();
+      toast("Offer letter generated and sent to the company owner for approval.", "success");
+      if (onDone) await onDone(letter);
     } catch (ex) {
       const orphans = applyErrors(form, ex.errors);
       if (orphans.length || !Object.keys(ex.errors || {}).length) toast(orphans.join("; ") || errorMessage(ex), "error");
@@ -377,34 +390,3 @@ export async function generateOfferDialog(record, onDone) {
   });
 }
 
-// The "Offer letters" card on a candidate. Returns { node, generate } so the page header can open the same dialog.
-export function offerLettersCard(record) {
-  const list = h("div");
-  const downloads = [];
-  const make = button("Generate offer letter", () => generate(), "primary");
-  const refreshAvailability = () => {
-    const ready = offerReady(record);
-    make.disabled = !ready;
-    make.title = ready ? "Generate offer letter" : "Available when Process is HR Discussion and Interview Status is Yet to Offer";
-    downloads.forEach((download) => { download.disabled = !ready; download.title = make.title; });
-  };
-  const draw = async () => {
-    try {
-      const rows = await api.get(`/candidates/${record.candidate_id}/offer-letters`);
-      downloads.length = 0;
-      const rowsEl = rows.map((r) => {
-        const download = button("Download PDF", () => api.download(`/offer-letters/${r.id}/pdf`, r.filename).catch((e) => toast(errorMessage(e), "error")));
-        downloads.push(download);
-        return h("tr", null, h("td", null, r.created_at), h("td", null, r.generated_by || ""), h("td", null, "v" + r.version),
-          h("td", { class: "row-actions" }, download));
-      });
-      clear(list).append(table(["Made on", "Made by", "Set-up version", ""], rowsEl));
-      refreshAvailability();
-    } catch (e) { clear(list).append(h("p", { class: "muted" }, errorMessage(e))); }
-  };
-  const generate = () => generateOfferDialog(record, draw);
-  refreshAvailability();
-  const node = card("Offer letters", can.owner() && !can.vendor() ? h("div", { class: "card-actions" }, make) : null, list);
-  draw();
-  return { node, generate, refreshAvailability };
-}

@@ -3,11 +3,12 @@ import logging
 import re
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
-from ..models import Candidate, OfferLetter, OfferStructure, Organization, User, utcnow
+from ..models import Candidate, Job, OfferLetter, OfferStructure, Organization, User, utcnow
 from . import audit, offer_docs
 from .candidates import get_row, public_id, scope
+from .jobs import parse_ref as parse_job_ref, public_id as job_public_id
 from .common import Conflict, Ctx, Forbidden, NotFound, ValidationError, org_today
 from .platform import BY, _client, _need, _need_platform
 
@@ -16,8 +17,10 @@ log = logging.getLogger("ats")
 KINDS = ("earning", "employer", "deduction")
 CALCS = ("pct_ctc", "pct_basic", "fixed", "balance")
 PERIODS = ("monthly", "annual")
-SYSTEM_FIELDS = ("candidate_name", "candidate_email", "candidate_phone", "candidate_id", "designation", "client",
-                 "job_req_id", "company_name", "offer_date")
+SYSTEM_FIELDS = ("candidate_name", "candidate_email", "candidate_phone", "candidate_id", "client",
+                 "job_req_id", "job_title", "company_name", "offer_date")
+MANUAL_FIELDS = {"designation", "band_or_grade", "department", "joining_date", "city", "state", "location"}
+CUSTOM_COMPONENT_HINT = re.compile(r"(?:_annual$|_monthly$|bonus|allowance|provident|(?:^|_)pf(?:_|$)|gratuity|deduction|insurance|commission|reimbursement|stock|equity|benefit|salary|wage|medical|travel)")
 TOTALS = ("ctc_annual", "ctc_monthly", "gross_annual", "gross_monthly")
 RESERVED = set(SYSTEM_FIELDS) | {"ctc", "gross"}
 WORKING = ("draft", "in_review", "changes_requested")
@@ -63,6 +66,7 @@ def _component_label(value) -> str:
     text = offer_docs._clean(value)
     # Older versions accidentally persisted split labels and then nested their repr on each save.
     text = re.sub(r"[\[\]\\\"']", " ", text)
+    text = re.sub(r"\s*,+\s*", " ", text)
     return " ".join(text.split()[:60])
 
 
@@ -122,12 +126,12 @@ def clean_components(raw) -> list[dict]:
 
 def compute(components: list[dict], ctc: int) -> dict:
     """Annual and monthly rupee amounts per component for an annual CTC."""
-    total = Decimal(ctc)
+    target_ctc = Decimal(ctc)
 
     def amount(c, basic):
         v = Decimal(str(c["value"]))
         if c["calc"] == "pct_ctc":
-            return total * v / 100
+            return target_ctc * v / 100
         if c["calc"] == "pct_basic":
             return Decimal(basic) * v / 100
         return v * 12 if c["period"] == "monthly" else v
@@ -157,7 +161,8 @@ def compute(components: list[dict], ctc: int) -> dict:
                                "annual_text": inr(a), "monthly_text": inr(m)})
     gross = sum(r["annual"] for r in component_rows if r["kind"] == "earning")
     gross_monthly = _round(Decimal(gross) / 12)
-    ctc_monthly = _round(Decimal(ctc) / 12)
+    total_ctc = sum(r["annual"] for r in component_rows if r["kind"] != "deduction")
+    ctc_monthly = _round(Decimal(total_ctc) / 12)
     earnings = [r for r in component_rows if r["kind"] == "earning"]
     employer_costs = [r for r in component_rows if r["kind"] == "employer"]
     deductions = [r for r in component_rows if r["kind"] == "deduction"]
@@ -165,10 +170,10 @@ def compute(components: list[dict], ctc: int) -> dict:
         {"key": "gross", "label": "Gross Salary", "kind": "total", "annual": gross, "monthly": gross_monthly,
          "annual_text": inr(gross), "monthly_text": inr(gross_monthly)}
     ] + employer_costs + deductions + [
-        {"key": "ctc", "label": "Total Annual CTC", "kind": "total", "annual": ctc, "monthly": ctc_monthly,
-         "annual_text": inr(ctc), "monthly_text": inr(ctc_monthly)}
+        {"key": "ctc", "label": "Total Annual CTC", "kind": "total", "annual": total_ctc, "monthly": ctc_monthly,
+         "annual_text": inr(total_ctc), "monthly_text": inr(ctc_monthly)}
     ]
-    return {"ctc": ctc, "ctc_text": inr(ctc), "rows": rows, "gross": gross, "gross_text": inr(gross),
+    return {"ctc": total_ctc, "ctc_text": inr(total_ctc), "rows": rows, "gross": gross, "gross_text": inr(gross),
             "unallocated": ctc - allocated, "unallocated_text": inr(ctc - allocated)}
 
 
@@ -188,18 +193,46 @@ def compensation_values(calc: dict) -> dict:
 # ---------------------------------------------------------------- placeholders
 def classify(names: list[str], components: list[dict]) -> dict:
     comp = set(TOTALS) | {"ctc"}
+    comp_keys = set()
     for c in components:
+        comp_keys.add(c["key"])
         comp |= {c["key"] + "_annual", c["key"] + "_monthly"}
-    out = {"automatic": [], "compensation": [], "asked": [], "unknown": []}
+    out = {"automatic": [], "compensation": [], "asked": [], "unknown": [], "unmapped_custom_tags": []}
     for n in names:
         if n in SYSTEM_FIELDS:
             out["automatic"].append(n)
-        elif n in comp:
+        elif n in comp or n in comp_keys:
             out["compensation"].append(n)
-        elif n.endswith(("_annual", "_monthly")):
-            out["unknown"].append(n)
+        elif n in MANUAL_FIELDS:
+            out["asked"].append(n)
         else:
             out["asked"].append(n)
+            if CUSTOM_COMPONENT_HINT.search(n):
+                out["unmapped_custom_tags"].append(n)
+    return out
+
+
+def _mapped_tag(name: str, mappings: dict) -> str:
+    target = mappings.get(name)
+    if not target:
+        return name
+    suffix = "_monthly" if name.endswith("_monthly") else "_annual"
+    return target + suffix
+
+
+def clean_tag_mappings(raw, components: list[dict]) -> dict[str, str]:
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict) or len(raw) > 100:
+        raise ValidationError({"tag_mappings": "give a mapping of at most 100 template tags"})
+    keys = {component["key"] for component in components}
+    out = {}
+    for source, target in raw.items():
+        tag = offer_docs.normalize_tag(source)
+        component = offer_docs.sanitize_tag(target)
+        if not tag or component not in keys:
+            raise ValidationError({"tag_mappings": f"the mapping for '{source}' must target an existing compensation component"})
+        out[tag] = component
     return out
 
 
@@ -208,14 +241,23 @@ def _label(name: str) -> str:
 
 
 def _analysis(s: OfferStructure) -> dict:
-    empty = {"automatic": [], "compensation": [], "asked": [], "unknown": [], "malformed": [], "error": None}
+    empty = {"automatic": [], "compensation": [], "asked": [], "unknown": [],
+             "unmapped_custom_tags": [], "malformed": [], "has_compensation_rows": False, "error": None}
     if not s.template_file:
         return empty
     try:
         info = offer_docs.placeholders(s.template_kind, s.template_file)
     except ValueError as e:
         return {**empty, "error": str(e)}
-    return {**classify(info["names"], s.components or []), "malformed": info["malformed"], "error": None}
+    mappings = s.tag_mappings or {}
+    names = [_mapped_tag(name, mappings) for name in info["names"]]
+    return {**classify(names, s.components or []), "tag_mappings": mappings,
+            "malformed": info["malformed"],
+            "has_compensation_rows": info.get("has_compensation_rows", False), "error": None}
+
+
+def _refresh_custom_tags(s: OfferStructure) -> None:
+    s.unmapped_custom_tags = _analysis(s)["unmapped_custom_tags"]
 
 
 # ---------------------------------------------------------------- structure lookup and views
@@ -241,6 +283,7 @@ def _view(s: OfferStructure, ctc: int | None = None) -> dict:
             preview_error = next(iter(e.errors.values()))
     return {"id": s.id, "version": s.version, "status": s.status, "template_name": s.template_name,
             "template_kind": s.template_kind, "has_template": bool(s.template_file), "components": comps,
+            "unmapped_custom_tags": _analysis(s)["unmapped_custom_tags"], "tag_mappings": s.tag_mappings or {},
             "template_text": offer_docs.template_text(s.template_kind, s.template_file) if s.template_file else "",
             "events": s.events or [], "placeholders": _analysis(s), "preview": preview, "preview_error": preview_error,
             "sent_at": s.sent_at.strftime("%Y-%m-%d %H:%M") if s.sent_at else None,
@@ -282,7 +325,8 @@ def _editable(ctx: Ctx, org: Organization, rise: bool) -> OfferStructure:
         raise Conflict("the accepted structure is locked; " + ("start a new version to change it" if rise
                                                                 else "ask Rise Consulting to change it"))
     top = ctx.db.scalar(select(func.max(OfferStructure.version)).where(OfferStructure.org_id == org.id)) or 0
-    s = OfferStructure(org_id=org.id, version=top + 1, status="draft", components=[], events=[], created_by=ctx.user.id)
+    s = OfferStructure(org_id=org.id, version=top + 1, status="draft", components=[],
+                       unmapped_custom_tags=[], tag_mappings={}, events=[], created_by=ctx.user.id)
     ctx.db.add(s)
     ctx.db.flush()
     _event(s, ctx, "created", rise=rise)
@@ -296,6 +340,7 @@ def _store_template(ctx: Ctx, s: OfferStructure, blob: bytes, filename: str, ris
         raise ValidationError({"template": str(e)})
     name = re.sub(r"[^A-Za-z0-9 .()-]", "", filename or "")[:120].strip() or "offer-letter." + kind
     s.template_file, s.template_kind, s.template_name = blob, kind, name
+    _refresh_custom_tags(s)
     _event(s, ctx, "template", name, rise)
 
 
@@ -316,6 +361,8 @@ def rise_save(ctx: Ctx, org_id: int, data: dict) -> dict:
     comps = clean_components(data.get("components"))
     s = _editable(ctx, org, True)
     s.components = comps
+    s.tag_mappings = clean_tag_mappings(data.get("tag_mappings", s.tag_mappings), comps)
+    _refresh_custom_tags(s)
     _event(s, ctx, "saved", f"{len(comps)} components", True)
     _audit_rise(ctx, org, "offer.structure_save", s)
     ctx.db.commit()
@@ -340,6 +387,7 @@ def _store_text_template(ctx: Ctx, s: OfferStructure, content: str, filename: st
     name = re.sub(r"[^A-Za-z0-9 .()-]", "", filename or "")[:120].strip() or "offer-letter.docx"
     name = re.sub(r"\.(pdf|docx)$", "", name, flags=re.I) + ".docx"
     s.template_file, s.template_kind, s.template_name = blob, "docx", name
+    _refresh_custom_tags(s)
     _event(s, ctx, "template", name, rise)
 
 
@@ -395,6 +443,8 @@ def rise_new_version(ctx: Ctx, org_id: int) -> dict:
         raise Conflict("there is no accepted structure to copy")
     top = ctx.db.scalar(select(func.max(OfferStructure.version)).where(OfferStructure.org_id == org.id))
     s = OfferStructure(org_id=org.id, version=top + 1, status="draft", components=list(active.components or []),
+                       unmapped_custom_tags=list(active.unmapped_custom_tags or []),
+                       tag_mappings=dict(active.tag_mappings or {}),
                        template_name=active.template_name, template_kind=active.template_kind,
                        template_file=active.template_file, events=[], created_by=ctx.user.id)
     ctx.db.add(s)
@@ -435,6 +485,8 @@ def owner_save(ctx: Ctx, data: dict) -> dict:
     comps = clean_components(data.get("components"))
     s = _editable(ctx, org, False)
     s.components = comps
+    s.tag_mappings = clean_tag_mappings(data.get("tag_mappings", s.tag_mappings), comps)
+    _refresh_custom_tags(s)
     _event(s, ctx, "saved", f"{len(comps)} compensation components")
     audit.record(ctx, "offer.structure_save", "offer_structure", s.id, {"version": s.version, "components": len(comps)})
     ctx.db.commit()
@@ -450,6 +502,8 @@ def owner_new_version(ctx: Ctx) -> dict:
         raise Conflict("there is no approved offer setup to copy")
     top = ctx.db.scalar(select(func.max(OfferStructure.version)).where(OfferStructure.org_id == org.id)) or 0
     s = OfferStructure(org_id=org.id, version=top + 1, status="draft", components=list(active.components or []),
+                       unmapped_custom_tags=list(active.unmapped_custom_tags or []),
+                       tag_mappings=dict(active.tag_mappings or {}),
                        template_name=active.template_name, template_kind=active.template_kind,
                        template_file=active.template_file, events=[], created_by=ctx.user.id)
     ctx.db.add(s)
@@ -476,7 +530,7 @@ def owner_template_text(ctx: Ctx, data: dict) -> dict:
     audit.record(ctx, "offer.template_save", "offer_structure", s.id, {"version": s.version, "file": s.template_name})
     ctx.db.commit()
     return _state(ctx.db, org)
-  
+
 
 def owner_template_file(ctx: Ctx) -> tuple[bytes, str, str]:
     return _template_of(ctx, _own_org(ctx, False))
@@ -484,10 +538,17 @@ def owner_template_file(ctx: Ctx) -> tuple[bytes, str, str]:
 
 def owner_template_preview(ctx: Ctx) -> bytes:
     org = _own_org(ctx, False)
+    s = _working(ctx.db, org.id) or _active(ctx.db, org.id)
     blob, _name, kind = _template_of(ctx, org)
     try:
         tokens = offer_docs.placeholders(kind, blob)["names"]
         values = {name: f"[{_label(name)}]" for name in tokens}
+        if s and s.components:
+            sample = compute(s.components, _sample_ctc(s.components))
+            values["compensation_rows"] = [
+                {"component_name": row["label"], "annual_amount": row["annual_text"],
+                 "monthly_amount": row["monthly_text"], "kind": row["kind"]}
+                for row in sample["rows"] if row["kind"] != "total"]
         pdf, _engine = offer_docs.render(kind, blob, values)
         return pdf
     except ValueError as e:
@@ -524,7 +585,7 @@ def _validate_setup(s: OfferStructure) -> None:
             problems.append("add compensation components for: " + ", ".join(info["unknown"]))
         if "candidate_name" not in info["automatic"]:
             problems.append("include {{candidate_name}} in the template")
-        if not info["compensation"]:
+        if not info["compensation"] and not info["has_compensation_rows"]:
             problems.append("include a compensation placeholder such as {{ctc_annual}} in the template")
     if not s.components:
         problems.append("add at least one compensation component")
@@ -563,10 +624,10 @@ def _need_write(ctx: Ctx) -> None:
         raise Forbidden("your role is read-only")
 
 
-def _need_owner(ctx: Ctx) -> None:
+def _need_company_owner(ctx: Ctx) -> None:
     if ctx.role != "owner" or ctx.org.is_platform or ctx.vendor_id:
-        raise Forbidden("only the company owner can generate offer letters")
-      
+        raise Forbidden("only the company owner can approve offer letters")
+
 
 def _require_offer_stage(cand: Candidate) -> None:
     if cand.process != "HR Discussion" or cand.current_status != "Yet to Offer":
@@ -580,11 +641,24 @@ def _accepted(ctx: Ctx) -> OfferStructure:
     return s
 
 
+def _job_title(ctx: Ctx, cand: Candidate) -> str:
+    ref = (cand.job_req_id or "").strip()
+    if not ref:
+        return ""
+    stmt = select(Job).where(Job.org_id == ctx.data_org_id, Job.deleted_at.is_(None),
+                             or_(Job.client_ref == ref, Job.seq == (parse_job_ref(ref) or -1)))
+    if cand.client:
+        stmt = stmt.where(func.lower(Job.client) == cand.client.strip().lower())
+    job = ctx.db.scalar(stmt.order_by(Job.seq.desc()))
+    return job.title if job else ""
+
+
 def _automatic(ctx: Ctx, cand: Candidate) -> dict:
     org = ctx.db.get(Organization, ctx.data_org_id)
     return {"candidate_name": cand.full_name or "", "candidate_email": cand.email or "", "candidate_phone": cand.phone or "",
-            "candidate_id": public_id(cand.seq), "designation": cand.primary_skill_role or "", "client": cand.client or "",
-            "job_req_id": cand.job_req_id or "", "company_name": org.name, "offer_date": org_today(org).strftime("%d %B %Y")}
+            "candidate_id": public_id(cand.seq), "client": cand.client or "", "job_req_id": cand.job_req_id or "",
+            "job_title": _job_title(ctx, cand), "company_name": org.name,
+            "offer_date": org_today(org).strftime("%d %B %Y")}
 
 
 def letter_form(ctx: Ctx, ref) -> dict:
@@ -594,13 +668,13 @@ def letter_form(ctx: Ctx, ref) -> dict:
     s = _accepted(ctx)
     groups = _analysis(s)
     auto = _automatic(ctx, cand)
-    return {"version": s.version, "needs_ctc": bool(groups["compensation"]),
+    return {"version": s.version, "needs_ctc": bool(groups["compensation"] or groups["has_compensation_rows"]),
             "automatic": [{"name": n, "label": _label(n), "value": auto[n]} for n in groups["automatic"]],
             "inputs": [{"name": n, "label": _label(n)} for n in groups["asked"]]}
 
 
 def letter_preview(ctx: Ctx, ref, data: dict) -> dict:
-    _need_owner(ctx)
+    _need_write(ctx)
     _require_offer_stage(get_row(ctx, ref))
     s = _accepted(ctx)
     return compute(s.components or [], parse_ctc(data.get("ctc")))
@@ -612,8 +686,18 @@ def _resolve(ctx: Ctx, s: OfferStructure, cand: Candidate, data: dict) -> dict:
         raise ValidationError({"offer": "the accepted template has problems; ask Rise Consulting to correct it"})
     auto = _automatic(ctx, cand)
     values = {n: auto[n] for n in groups["automatic"]}
-    if groups["compensation"]:
-        values.update(compensation_values(compute(s.components or [], parse_ctc(data.get("ctc")))))
+    if groups["compensation"] or groups["has_compensation_rows"]:
+        calc = compute(s.components or [], parse_ctc(data.get("ctc")))
+        computed = compensation_values(calc)
+        computed["compensation_rows"] = [
+            {"component_name": row["label"], "annual_amount": row["annual_text"],
+             "monthly_amount": row["monthly_text"], "kind": row["kind"]}
+            for row in calc["rows"] if row["kind"] != "total"]
+        values.update(computed)
+        component_keys = {c["key"] for c in (s.components or [])}
+        for n in groups["compensation"]:
+            if n in component_keys:
+                values[n] = computed.get(n + "_annual", "")
     given = data.get("inputs") if isinstance(data.get("inputs"), dict) else {}
     errors = {}
     for n in groups["asked"]:
@@ -625,16 +709,22 @@ def _resolve(ctx: Ctx, s: OfferStructure, cand: Candidate, data: dict) -> dict:
         values[n] = v
     if errors:
         raise ValidationError(errors)
+    if s.tag_mappings:
+        for source in offer_docs.placeholders(s.template_kind, s.template_file)["names"]:
+            target = _mapped_tag(source, s.tag_mappings)
+            if target != source:
+                values[source] = values.get(target, "")
     return values
 
 
 def _letter_dict(id: int, created_at, by: str | None, engine: str, version: int, public: str) -> dict:
     return {"id": id, "candidate_id": public, "created_at": created_at.strftime("%Y-%m-%d %H:%M"), "generated_by": by,
-            "engine": engine, "version": version, "filename": f"Offer_{public}_{created_at:%Y%m%d}.pdf"}
+            "engine": engine, "version": version, "approval_status": "pending_approval",
+            "filename": f"Offer_{public}_{created_at:%Y%m%d}.pdf"}
 
 
 def generate(ctx: Ctx, ref, data: dict) -> dict:
-    _need_owner(ctx)
+    _need_write(ctx)
     cand = get_row(ctx, ref)
     _require_offer_stage(cand)
     s = _accepted(ctx)
@@ -645,7 +735,8 @@ def generate(ctx: Ctx, ref, data: dict) -> dict:
         log.exception("offer letter rendering failed for structure %s", s.id)
         raise ValueError("the letter could not be produced from this template; ask Rise Consulting to check it")
     letter = OfferLetter(org_id=ctx.data_org_id, candidate_id=cand.id, structure_id=s.id, vendor_org_id=cand.vendor_org_id,
-                         generated_by=ctx.user.id, values=values, pdf=pdf, pdf_engine=engine)
+                         generated_by=ctx.user.id, values=values, pdf=pdf, pdf_engine=engine,
+                         approval_status="pending_approval")
     ctx.db.add(letter)
     ctx.db.flush()
     public = public_id(cand.seq)
@@ -658,25 +749,75 @@ def generate(ctx: Ctx, ref, data: dict) -> dict:
     return out
 
 
+def _letter_for_candidate_scope(ctx: Ctx, letter_id: int) -> tuple[OfferLetter, Candidate]:
+    letter = ctx.db.scalar(select(OfferLetter).where(OfferLetter.id == letter_id,
+                                                    OfferLetter.org_id == ctx.data_org_id))
+    cand = ctx.db.scalar(select(Candidate).where(*scope(ctx), Candidate.id == letter.candidate_id)) if letter else None
+    if not letter or not cand:
+        raise NotFound("offer letter not found")
+    return letter, cand
+
+
+def approval_queue(ctx: Ctx) -> dict:
+    _need_company_owner(ctx)
+    rows = ctx.db.execute(
+        select(OfferLetter.id, OfferLetter.created_at, OfferLetter.pdf_engine, OfferLetter.approval_status,
+               Candidate.seq, Candidate.full_name, User.full_name, OfferStructure.version)
+        .join(Candidate, Candidate.id == OfferLetter.candidate_id)
+        .outerjoin(User, User.id == OfferLetter.generated_by)
+        .join(OfferStructure, OfferStructure.id == OfferLetter.structure_id)
+        .where(OfferLetter.org_id == ctx.data_org_id,
+               Candidate.deleted_at.is_(None))
+        .order_by(OfferLetter.created_at.asc())).all()
+    items = [{**_letter_dict(letter_id, created_at, by, engine, version, public_id(seq)),
+              "candidate_name": candidate_name, "approval_status": approval_status}
+             for letter_id, created_at, engine, approval_status, seq, candidate_name, by, version in rows]
+    return {"pending": [item for item in items if item["approval_status"] == "pending_approval"],
+            "approved": [item for item in items if item["approval_status"] == "approved"]}
+
+
+def approve_letter(ctx: Ctx, letter_id: int) -> dict:
+    _need_company_owner(ctx)
+    letter, cand = _letter_for_candidate_scope(ctx, letter_id)
+    if letter.approval_status != "pending_approval":
+        raise Conflict("this offer letter is no longer waiting for approval")
+    letter.approval_status = "approved"
+    letter.approved_by = ctx.user.id
+    letter.approved_at = utcnow()
+    structure = ctx.db.get(OfferStructure, letter.structure_id)
+    audit.record(ctx, "offer.approve", "candidate", cand.id,
+                 {"candidate": public_id(cand.seq), "letter": letter.id,
+                  "version": structure.version if structure else None})
+    ctx.db.commit()
+    return {"id": letter.id, "approval_status": letter.approval_status,
+            "approved_at": letter.approved_at.strftime("%Y-%m-%d %H:%M")}
+
+
+def preview_letter(ctx: Ctx, letter_id: int) -> tuple[bytes, str]:
+    _need_write(ctx)
+    letter, cand = _letter_for_candidate_scope(ctx, letter_id)
+    return letter.pdf, f"Offer_{public_id(cand.seq)}_{letter.created_at:%Y%m%d}.pdf"
+
+
 def list_letters(ctx: Ctx, ref) -> list[dict]:
     _need_write(ctx)
     cand = get_row(ctx, ref)
     rows = ctx.db.execute(
-        select(OfferLetter.id, OfferLetter.created_at, OfferLetter.pdf_engine, User.full_name, OfferStructure.version)
+        select(OfferLetter.id, OfferLetter.created_at, OfferLetter.pdf_engine, User.full_name,
+               OfferStructure.version, OfferLetter.approval_status)
         .join(OfferStructure, OfferStructure.id == OfferLetter.structure_id)
         .outerjoin(User, User.id == OfferLetter.generated_by)
         .where(OfferLetter.org_id == ctx.data_org_id, OfferLetter.candidate_id == cand.id).order_by(OfferLetter.id.desc())).all()
-    return [_letter_dict(r[0], r[1], r[3], r[2], r[4], public_id(cand.seq)) for r in rows]
+    return [{**_letter_dict(r[0], r[1], r[3], r[2], r[4], public_id(cand.seq)), "approval_status": r[5]}
+            for r in rows]
 
 
 def download(ctx: Ctx, letter_id: int) -> tuple[bytes, str]:
     _need_write(ctx)
-    letter = ctx.db.scalar(select(OfferLetter).where(OfferLetter.id == letter_id, OfferLetter.org_id == ctx.data_org_id))
-    cand = letter and ctx.db.scalar(select(Candidate).where(*scope(ctx), Candidate.id == letter.candidate_id))
-    if not letter or not cand:
-        raise NotFound("offer letter not found")
+    letter, cand = _letter_for_candidate_scope(ctx, letter_id)
+    if letter.approval_status != "approved":
+        raise Forbidden("the company owner must approve this offer letter before it can be downloaded")
     structure = ctx.db.get(OfferStructure, letter.structure_id)
     if not structure or structure.status not in ("active", "superseded"):
         raise Forbidden("this offer letter cannot be downloaded until its set-up is approved")
-    _require_offer_stage(cand)
     return letter.pdf, f"Offer_{public_id(cand.seq)}_{letter.created_at:%Y%m%d}.pdf"

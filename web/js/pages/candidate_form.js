@@ -1,7 +1,7 @@
 import { api, qs } from "../api.js";
 import { h, clear, card, pageHeader, field, select, optionsFor, applyErrors, toast, errorMessage, button, can, state, statusBadge, confirmBox, debounce } from "../ui.js";
 import { go } from "../router.js";
-import { offerLettersCard, offerReady } from "./offer.js";
+import { generateOfferDialog, offerReady, previewGeneratedOffer } from "./offer.js";
 
 const SECTIONS = [
   ["Basics", ["date_added", "recruiter", "process", "full_name", "current_company", "current_location", "primary_skill_role"]],
@@ -88,7 +88,6 @@ export async function candidateFormPage(root, params) {
     try {
       if (editing) {
         Object.assign(record, await api.patch(`/candidates/${record.candidate_id}`, { ...body, version: record.version }));
-        letters?.refreshAvailability();
         if (generateOffer) {
           generateOffer.disabled = !offerReady(record);
           generateOffer.title = offerReady(record) ? "Generate offer letter" : "Available when Process is HR Discussion and Interview Status is Yet to Offer";
@@ -115,17 +114,16 @@ export async function candidateFormPage(root, params) {
   });
 
   const badge = editing ? h("span", null, "Interview status: ", statusBadge(record.current_status)) : null;
-  let letters = null;
-  const generateOffer = editing && can.owner() && !can.vendor() ? button("Generate offer letter", () => letters?.generate(), "primary") : null;
+  const generateOffer = editing && can.write() ? button("Generate offer letter", () => generateOfferDialog(record,
+    (letter) => previewGeneratedOffer(letter.id)), "primary") : null;
   if (generateOffer) {
     generateOffer.disabled = !offerReady(record);
     generateOffer.title = offerReady(record) ? "Generate offer letter" : "Available when Process is HR Discussion and Interview Status is Yet to Offer";
   }
-  root.append(pageHeader(editing ? `${record.candidate_id} - ${record.full_name}` : "Add candidate",
+  root.append(pageHeader(editing ? `${record.candidate_id} - ${record.full_name}` : "Candidate",
     editing ? "Edit details, then review the interview history below." : "Fill in what you know. Required fields are marked with *.",
     badge,
     generateOffer,
-    editing && can.owner() && !can.vendor() ? button ("Generate offer letter", () => letters?.generate()) : null,
     editing && can.admin() ? button("Delete", async () => {
       if (!await confirmBox("Delete candidate", `Delete ${record.full_name}? They disappear from every list; the record is kept for audit.`, "Delete", true)) return;
       try { await api.del(`/candidates/${record.candidate_id}`); toast("Candidate deleted.", "success"); go("/candidates"); } catch (e) { toast(errorMessage(e), "error"); }
@@ -136,16 +134,19 @@ export async function candidateFormPage(root, params) {
     const history_ = h("div");
     const drawHistory = async () => {
       const rows = await api.get("/interviews" + qs({ candidate_id: record.candidate_id }));
-      clear(history_).append(rows.length ? h("ol", { class: "timeline" }, rows.slice().sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || ""))).map((r) => h("li", null,
-        h("div", null, statusBadge(r.status), h("small", { class: "muted" }, ` Changed ${r.created_at || "date unavailable"}`))))) 
+      clear(history_).append(rows.length ? h("ol", { class: "timeline" }, rows.slice().sort((a, b) => String(b.interview_date || b.created_at || "").localeCompare(String(a.interview_date || a.created_at || ""))).map((r) => h("li", null,
+        h("div", { class: "interview-history-entry" },
+          h("strong", null, r.interview_stage || "Interview"), " · ", r.interview_date || "Date unavailable", r.interview_time ? ` at ${r.interview_time}` : "",
+          h("div", null, statusBadge(r.status)),
+          r.interviewer_panel ? h("p", null, h("strong", null, "Panel: "), r.interviewer_panel) : null,
+          r.feedback ? h("p", null, h("strong", null, "Feedback: "), r.feedback) : null,
+          r.next_action ? h("p", null, h("strong", null, "Next action: "), r.next_action) : null,
+          r.next_followup_date ? h("p", null, h("strong", null, "Follow-up: "), r.next_followup_date) : null,
+          h("small", { class: "muted" }, `Recorded ${r.created_at || "date unavailable"}`)))))
         : h("p", { class: "muted" }, "No interviews recorded yet."));
     };
     await drawHistory();
     root.append(card("Interview history", history_));
-    if (writable) {
-      letters = offerLettersCard(record);
-      root.append(letters.node);
-    }
   }
   setTimeout(() => (editing ? controls.full_name : controls.full_name)?.focus(), 0);
 }

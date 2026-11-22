@@ -2,7 +2,7 @@ import { api, qs } from "../api.js";
 import { h, modal, pageHeader, button, guarded, can, state, toast, errorMessage, confirmBox, debounce } from "../ui.js";
 import { go } from "../router.js";
 import { createGrid } from "../grid.js";
-import { openInterviewForm } from "./interview_form.js";
+import { generateOfferDialog, offerReady, previewGeneratedOffer } from "./offer.js";
 
 const WIDTHS = { candidate_id: 100, full_name: 190, textarea: 260, date: 130, number: 120, select: 150, email: 210 };
 
@@ -21,6 +21,17 @@ function buildColumns() {
     }),
     { key: "process", label: process.label, type: "select", list: process.list, inlineSelect: true, width: WIDTHS.process || WIDTHS.select },
     { key: "current_status", label: "Interview Status", type: "select", list: "status", inlineSelect: true, width: 170 },
+     { key: "offer_letter_action", label: "Offer letter", type: "action", readonly: true, sortable: false, filter: "none", width: 190,
+      render: (row) => {
+        const ready = offerReady(row);
+        return h("button", { class: "btn small primary", type: "button", disabled: !can.write() || !ready,
+          title: ready ? "Generate offer letter" : "Available when Process is HR Discussion and Interview Status is Yet to Offer",
+          onclick: async (e) => {
+            e.stopPropagation();
+            if (!ready || !can.write()) return;
+            await generateOfferDialog(row, (letter) => previewGeneratedOffer(letter.id));
+          } }, "Generate offer letter");
+      } },
     ...((state.meta.vendors || []).length ? [{ key: "vendor", label: "Vendor", type: "text", readonly: true, sortable: false, filter: "none", width: 160 }] : []),
     { key: "last_updated", label: "Last updated", type: "text", readonly: true, filter: "none", width: 150 },
   ];
@@ -59,9 +70,6 @@ export async function candidatesPage(root, params) {
       return api.patch(`/candidates/${row.candidate_id}`, { [key]: value, version: row.version });
     },
     rowActions: (row) => [
-      h("span", { class: "icon-link", title: "Candidate details open from the ID or name" }, "↗"),
-      writable ? h("button", { class: "icon-link", type: "button", title: "Add interview entry", "aria-label": "Add interview entry",
-        onclick: () => openInterviewForm({ candidateId: row.candidate_id, onSaved: () => grid.reload() }) }, "📅") : null,
       can.admin() ? h("button", { class: "icon-link danger-text", type: "button", title: "Delete", "aria-label": "Delete " + row.candidate_id,
         onclick: async () => {
           if (!await confirmBox("Delete candidate", `Delete ${row.full_name}? They disappear from every list; the record is kept for audit.`, "Delete", true)) return;
